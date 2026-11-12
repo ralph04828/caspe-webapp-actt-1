@@ -1,0 +1,110 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "The unique Firebase Auth identifier for the user"
+        },
+        "email": {
+          "type": "string",
+          "description": "The user email address"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "The user full display name"
+        },
+        "photoURL": {
+          "type": "string",
+          "description": "Optional user profile image URL"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["freelancer", "designer", "client"],
+          "description": "Account role"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when account was created"
+        }
+      },
+      "required": ["uid", "email", "createdAt"]
+    },
+    "FileRecord": {
+      "title": "File Record",
+      "description": "Metadata for an uploaded client file in Swoooshz",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique file identifier"
+        },
+        "userId": {
+          "type": "string",
+          "description": "The user ID who owns or received this file"
+        },
+        "fileName": {
+          "type": "string",
+          "description": "Original file name",
+          "maxLength": 255
+        },
+        "fileSize": {
+          "type": "number",
+          "description": "File size in bytes"
+        },
+        "fileType": {
+          "type": "string",
+          "description": "MIME type or file extension"
+        },
+        "fileUrl": {
+          "type": "string",
+          "description": "Download or preview URL of the file"
+        },
+        "storagePath": {
+          "type": "string",
+          "description": "Storage path reference"
+        },
+        "clientName": {
+          "type": "string",
+          "description": "Name of the client or company",
+          "maxLength": 100
+        },
+        "category": {
+          "type": "string",
+          "description": "Folder or category classification",
+          "maxLength": 50
+        },
+        "notes": {
+          "type": "string",
+          "description": "Optional client or designer notes",
+          "maxLength": 1000
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO timestamp of upload"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO timestamp of last update"
+        }
+      },
+      "required": ["id", "userId", "fileName", "fileSize", "fileType", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Stores user account information and role"
+    },
+    "/files/{fileId}": {
+      "schema": "FileRecord",
+      "description": "Stores file metadata, client associations, and upload details"
+    }
+  }
+}

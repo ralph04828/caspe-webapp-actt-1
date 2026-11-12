@@ -1,0 +1,6 @@
+{
+  "name": "Swoooshz - Client File Portal",
+  "description": "A secure client file portal for freelancers and designers to let clients upload and manage files effortlessly.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
