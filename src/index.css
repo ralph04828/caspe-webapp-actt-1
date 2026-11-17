@@ -1,1 +1,74 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --bg-primary: #f5f4f0;
+  --bg-secondary: #eae7e0;
+  --bg-surface: #ffffff;
+  --bg-elevated: #fcfbf9;
+  --border-color: #d8d4ca;
+  --text-primary: #171717;
+  --text-secondary: #5c5a54;
+  --accent-gray: #78756e;
+  --btn-primary-bg: #171717;
+  --btn-primary-text: #f5f4f0;
+}
+
+.dark {
+  --bg-primary: #171717;
+  --bg-secondary: #303030;
+  --bg-surface: #242424;
+  --bg-elevated: #555555;
+  --border-color: #404040;
+  --text-primary: #e5e1da;
+  --text-secondary: #b0b0b0;
+  --accent-gray: #a5a5a5;
+  --btn-primary-bg: #e5e1da;
+  --btn-primary-text: #171717;
+}
+
+@layer base {
+  html {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: 'Outfit', system-ui, -apple-system, sans-serif;
+  }
+
+  .font-mono-num {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Custom Concrete Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #404040;
+  border-radius: 3px;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #555555;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

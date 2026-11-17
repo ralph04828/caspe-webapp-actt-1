@@ -1,6 +1,6 @@
 {
-  "name": "Swoooshz - Client File Portal",
-  "description": "A secure client file portal for freelancers and designers to let clients upload and manage files effortlessly.",
+  "name": "SWOOOSH — AI Digital Wardrobe & Personal Fashion Stylist",
+  "description": "SWOOOSH is an AI-powered digital wardrobe and personal fashion management platform. PLAN. ORGANIZE. WEAR.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

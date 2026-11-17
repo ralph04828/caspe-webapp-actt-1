@@ -2,109 +2,159 @@
   "entities": {
     "User": {
       "title": "User",
-      "description": "User profile information",
+      "description": "User profile and theme preferences for SWOOOSH",
       "type": "object",
       "properties": {
         "uid": {
           "type": "string",
-          "description": "The unique Firebase Auth identifier for the user"
+          "description": "Firebase Auth UID",
+          "maxLength": 128
         },
         "email": {
           "type": "string",
-          "description": "The user email address"
+          "description": "Registered email address",
+          "maxLength": 256
         },
         "displayName": {
           "type": "string",
-          "description": "The user full display name"
+          "description": "User full name",
+          "maxLength": 120
         },
         "photoURL": {
           "type": "string",
-          "description": "Optional user profile image URL"
+          "description": "Profile photo URL",
+          "maxLength": 100000
         },
-        "role": {
+        "theme": {
           "type": "string",
-          "enum": ["freelancer", "designer", "client"],
-          "description": "Account role"
+          "enum": ["dark", "light"],
+          "description": "Preferred Concrete theme"
         },
-        "createdAt": {
+        "stylePreference": {
           "type": "string",
-          "format": "date-time",
-          "description": "Timestamp when account was created"
-        }
-      },
-      "required": ["uid", "email", "createdAt"]
-    },
-    "FileRecord": {
-      "title": "File Record",
-      "description": "Metadata for an uploaded client file in Swoooshz",
-      "type": "object",
-      "properties": {
-        "id": {
-          "type": "string",
-          "description": "Unique file identifier"
-        },
-        "userId": {
-          "type": "string",
-          "description": "The user ID who owns or received this file"
-        },
-        "fileName": {
-          "type": "string",
-          "description": "Original file name",
-          "maxLength": 255
-        },
-        "fileSize": {
-          "type": "number",
-          "description": "File size in bytes"
-        },
-        "fileType": {
-          "type": "string",
-          "description": "MIME type or file extension"
-        },
-        "fileUrl": {
-          "type": "string",
-          "description": "Download or preview URL of the file"
-        },
-        "storagePath": {
-          "type": "string",
-          "description": "Storage path reference"
-        },
-        "clientName": {
-          "type": "string",
-          "description": "Name of the client or company",
-          "maxLength": 100
-        },
-        "category": {
-          "type": "string",
-          "description": "Folder or category classification",
-          "maxLength": 50
-        },
-        "notes": {
-          "type": "string",
-          "description": "Optional client or designer notes",
-          "maxLength": 1000
+          "description": "Preferred fashion aesthetic",
+          "maxLength": 80
         },
         "createdAt": {
           "type": "string",
           "format": "date-time",
-          "description": "ISO timestamp of upload"
+          "maxLength": 64
         },
         "updatedAt": {
           "type": "string",
           "format": "date-time",
-          "description": "ISO timestamp of last update"
+          "maxLength": 64
         }
       },
-      "required": ["id", "userId", "fileName", "fileSize", "fileType", "createdAt"]
+      "required": ["uid", "email", "createdAt"]
+    },
+    "ClothingItem": {
+      "title": "Clothing Item",
+      "description": "Personal wardrobe garment entry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 160 },
+        "category": {
+          "type": "string",
+          "enum": ["T-shirts", "Shirts", "Hoodies", "Jackets", "Pants", "Shorts", "Jorts", "Shoes", "Sneakers", "Slides", "Accessories", "Other"]
+        },
+        "brand": { "type": "string", "maxLength": 100 },
+        "color": { "type": "string", "maxLength": 60 },
+        "size": { "type": "string", "maxLength": 32 },
+        "price": { "type": "number" },
+        "purchaseDate": { "type": "string", "maxLength": 64 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "imageUrl": { "type": "string", "maxLength": 500000 },
+        "storagePath": { "type": "string", "maxLength": 500 },
+        "wearCount": { "type": "number" },
+        "lastWornAt": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string", "format": "date-time", "maxLength": 64 },
+        "updatedAt": { "type": "string", "format": "date-time", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "name", "category", "brand", "color", "size", "price", "wearCount", "createdAt"]
+    },
+    "Outfit": {
+      "title": "Outfit",
+      "description": "Saved outfit combination in Fit Builder / My Lookbook",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 160 },
+        "styleCategory": { "type": "string", "maxLength": 80 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "topId": { "type": "string", "maxLength": 128 },
+        "bottomId": { "type": "string", "maxLength": 128 },
+        "shoesId": { "type": "string", "maxLength": 128 },
+        "accessoryIds": { "type": "array" },
+        "coverImageUrl": { "type": "string", "maxLength": 500000 },
+        "storagePath": { "type": "string", "maxLength": 500 },
+        "isFavorite": { "type": "boolean" },
+        "source": { "type": "string", "enum": ["builder", "ai"] },
+        "createdAt": { "type": "string", "format": "date-time", "maxLength": 64 },
+        "updatedAt": { "type": "string", "format": "date-time", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "name", "styleCategory", "isFavorite", "createdAt"]
+    },
+    "WishlistItem": {
+      "title": "Wishlist Item",
+      "description": "Personal clothing wishlist item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 160 },
+        "brand": { "type": "string", "maxLength": 100 },
+        "category": { "type": "string", "maxLength": 60 },
+        "price": { "type": "number" },
+        "productUrl": { "type": "string", "maxLength": 1000 },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "imageUrl": { "type": "string", "maxLength": 500000 },
+        "storagePath": { "type": "string", "maxLength": 500 },
+        "isPurchased": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time", "maxLength": 64 },
+        "updatedAt": { "type": "string", "format": "date-time", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "name", "brand", "category", "price", "isPurchased", "createdAt"]
+    },
+    "OutfitSchedule": {
+      "title": "Outfit Schedule",
+      "description": "Calendar-based outfit planner assignment",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "date": { "type": "string", "maxLength": 20 },
+        "outfitId": { "type": "string", "maxLength": 128 },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string", "format": "date-time", "maxLength": 64 },
+        "updatedAt": { "type": "string", "format": "date-time", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "date", "outfitId", "createdAt"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": "User",
-      "description": "Stores user account information and role"
+      "description": "User profile and theme settings"
     },
-    "/files/{fileId}": {
-      "schema": "FileRecord",
-      "description": "Stores file metadata, client associations, and upload details"
+    "/wardrobe/{itemId}": {
+      "schema": "ClothingItem",
+      "description": "User clothing items"
+    },
+    "/outfits/{outfitId}": {
+      "schema": "Outfit",
+      "description": "User saved outfits and lookbook entries"
+    },
+    "/wishlist/{wishId}": {
+      "schema": "WishlistItem",
+      "description": "User fashion wishlist"
+    },
+    "/schedules/{scheduleId}": {
+      "schema": "OutfitSchedule",
+      "description": "User calendar outfit planner assignments"
     }
   }
 }
