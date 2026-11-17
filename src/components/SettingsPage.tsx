@@ -1,326 +1,416 @@
 import React, { useState } from 'react';
+import { STYLE_CATEGORIES, Visibility } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+import { useWardrobe } from '../context/WardrobeContext';
+import { useSocial } from '../context/SocialContext';
 import { uploadImageAsset } from '../services/storageService';
-import { STYLE_CATEGORIES } from '../types';
-import { Upload, Sun, Moon, LogOut, KeyRound, User } from 'lucide-react';
+import { normalizeUsername } from '../utils/formatters';
+import { Download, Lock, Save, Shield, Trash2, Upload } from 'lucide-react';
 
 interface SettingsPageProps {
   onToast: (msg: string, type?: 'success' | 'error') => void;
 }
 
 export const SettingsPage: React.FC<SettingsPageProps> = ({ onToast }) => {
-  const {
-    userProfile,
-    isDemoMode,
-    updateAccountProfile,
-    changePassword,
-    signOutUser,
-  } = useAuth();
+  const { userProfile, isDemoMode, updateAccountProfile, changePassword, deleteAccount } = useAuth();
   const { theme, setTheme } = useTheme();
+  const { wardrobe, outfits, wishlist, schedules, wearLogs } = useWardrobe();
+  const { blockedEdges, mutedEdges, toggleBlock, toggleMute } = useSocial();
 
   const [displayName, setDisplayName] = useState(userProfile?.displayName || '');
-  const [photoURL, setPhotoURL] = useState(userProfile?.photoURL || '');
-  const [stylePreference, setStylePreference] = useState(
-    userProfile?.stylePreference || 'Streetwear'
+  const [username, setUsername] = useState(userProfile?.username || '');
+  const [bio, setBio] = useState(userProfile?.bio || '');
+  const [styleTags, setStyleTags] = useState<string[]>(userProfile?.styleTags || ['Streetwear']);
+  const [isPublic, setIsPublic] = useState(userProfile?.isPublic !== false);
+  const [defaultItemVis, setDefaultItemVis] = useState<Visibility>(
+    userProfile?.defaultItemVisibility || 'public'
   );
-  const [uploadingPhoto, setUploadingPhoto] = useState(false);
-  const [savingProfile, setSavingProfile] = useState(false);
+  const [defaultOutfitVis, setDefaultOutfitVis] = useState<Visibility>(
+    userProfile?.defaultOutfitVisibility || 'public'
+  );
+  const [autoDirtyOnWear, setAutoDirtyOnWear] = useState(Boolean(userProfile?.autoDirtyOnWear));
+  const [saving, setSaving] = useState(false);
 
-  const [currentPassword, setCurrentPassword] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmNewPassword, setConfirmNewPassword] = useState('');
-  const [savingPassword, setSavingPassword] = useState(false);
+  const [currentPwd, setCurrentPwd] = useState('');
+  const [newPwd, setNewPwd] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
-  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !userProfile) return;
-    setUploadingPhoto(true);
     try {
-      const uploaded = await uploadImageAsset(file, userProfile.uid, 'profiles', isDemoMode);
-      setPhotoURL(uploaded.imageUrl);
-      await updateAccountProfile({ photoURL: uploaded.imageUrl });
+      const uploaded = await uploadImageAsset(file, userProfile.uid, 'public', isDemoMode);
+      await updateAccountProfile({ photoURL: uploaded.thumbUrl, mediaId: uploaded.mediaId });
       onToast('Profile photo updated.');
     } catch (err: any) {
-      onToast(err.message || 'Could not update profile photo.', 'error');
-    } finally {
-      setUploadingPhoto(false);
+      onToast(err?.message || 'Could not update photo.', 'error');
     }
   };
 
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!displayName.trim()) {
-      onToast('Full name cannot be empty.', 'error');
-      return;
-    }
-    setSavingProfile(true);
+    setSaving(true);
     try {
       await updateAccountProfile({
         displayName: displayName.trim(),
-        stylePreference,
+        username: normalizeUsername(username),
+        bio: bio.trim(),
+        styleTags,
+        isPublic,
+        defaultItemVisibility: defaultItemVis,
+        defaultOutfitVisibility: defaultOutfitVis,
+        autoDirtyOnWear,
       });
-      onToast('Profile preferences saved.');
+      onToast('Profile and privacy settings saved.');
     } catch (err: any) {
-      onToast(err.message || 'Could not save profile.', 'error');
+      onToast(err?.message || 'Failed to update settings.', 'error');
     } finally {
-      setSavingProfile(false);
+      setSaving(false);
     }
   };
 
-  const handleThemeSelect = async (nextTheme: 'dark' | 'light') => {
-    setTheme(nextTheme);
-    try {
-      await updateAccountProfile({ theme: nextTheme });
-    } catch {
-      // Theme is stored locally
-    }
-    onToast(`Switched to ${nextTheme === 'dark' ? 'Dark' : 'Light'} Mode.`);
+  const handleExportJson = () => {
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      profile: {
+        displayName: userProfile?.displayName,
+        username: userProfile?.username,
+        bio: userProfile?.bio,
+        styleTags: userProfile?.styleTags,
+      },
+      wardrobe,
+      outfits,
+      wishlist,
+      schedules,
+      wearLogs,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `swooosh-export-${userProfile?.username || 'member'}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    onToast('Exported your SWOOOSH data as JSON.');
   };
 
-  const handlePasswordChange = async (e: React.FormEvent) => {
+  const handleUpdatePassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!currentPassword || !newPassword) {
-      onToast('Enter both current and new passwords.', 'error');
-      return;
-    }
-    if (newPassword.length < 6) {
-      onToast('New password must be at least 6 characters.', 'error');
-      return;
-    }
-    if (newPassword !== confirmNewPassword) {
-      onToast('New passwords do not match.', 'error');
-      return;
-    }
-
-    setSavingPassword(true);
     try {
-      await changePassword(currentPassword, newPassword);
-      setCurrentPassword('');
-      setNewPassword('');
-      setConfirmNewPassword('');
-      onToast('Password updated securely.');
+      await changePassword(currentPwd, newPwd);
+      setCurrentPwd('');
+      setNewPwd('');
+      onToast('Password updated.');
     } catch (err: any) {
-      onToast(err.message || 'Could not change password.', 'error');
-    } finally {
-      setSavingPassword(false);
+      onToast(err?.message || 'Password update failed.', 'error');
     }
   };
 
   return (
-    <div className="max-w-3xl space-y-8">
-      <div className="pb-5 border-b border-[#d8d4ca] dark:border-[#404040]">
-        <p className="text-xs uppercase tracking-[0.18em] text-[#5c5a54] dark:text-[#b0b0b0]">
-          Account & Theme Preferences
+    <div className="max-w-3xl mx-auto space-y-6">
+      <div>
+        <h1 className="font-display text-2xl font-bold tracking-tight">Settings & Privacy</h1>
+        <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8]">
+          Manage your profile, visibility defaults, blocked/muted users, data export, and account.
         </p>
-        <h1 className="font-display text-3xl font-bold tracking-tight mt-1">
-          Settings
-        </h1>
       </div>
 
-      {/* Profile Section */}
-      <section className="bg-white dark:bg-[#242424] border border-[#d8d4ca] dark:border-[#404040] p-6 space-y-5">
-        <div className="flex items-center gap-2 pb-3 border-b border-[#d8d4ca] dark:border-[#404040]">
-          <User className="w-4 h-4" />
-          <h2 className="font-display text-lg font-bold">Profile Details</h2>
-        </div>
-
-        <div className="flex items-center gap-4">
-          {photoURL ? (
-            <img
-              src={photoURL}
-              alt={displayName}
-              referrerPolicy="no-referrer"
-              className="w-16 h-16 object-cover border border-[#d8d4ca] dark:border-[#404040]"
-            />
-          ) : (
-            <div className="w-16 h-16 bg-[#171717] dark:bg-[#e5e1da] text-[#f5f4f0] dark:text-[#171717] font-display text-xl font-bold flex items-center justify-center">
-              {(displayName || userProfile?.email || 'S').charAt(0).toUpperCase()}
-            </div>
-          )}
-
-          <label className="inline-flex items-center gap-2 px-3.5 py-2 border border-[#d8d4ca] dark:border-[#404040] hover:border-[#171717] dark:hover:border-[#e5e1da] text-xs font-medium cursor-pointer">
+      {/* Profile & Privacy Form */}
+      <form
+        onSubmit={handleSaveProfile}
+        className="p-6 rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] space-y-4"
+      >
+        <div className="flex items-center justify-between gap-4">
+          <h2 className="font-display font-bold text-base">Profile & Visibility</h2>
+          <label className="px-3 py-1.5 rounded-control border border-[#d4cfc5] dark:border-[#404040] text-xs font-semibold flex items-center gap-1.5 cursor-pointer">
             <Upload className="w-3.5 h-3.5" />
-            <span>{uploadingPhoto ? 'Uploading...' : 'Update Profile Photo'}</span>
-            <input
-              type="file"
-              accept="image/*"
-              onChange={handlePhotoUpload}
-              disabled={uploadingPhoto}
-              className="hidden"
-            />
+            <span>Change Avatar</span>
+            <input type="file" accept="image/*" onChange={handleAvatarUpload} className="sr-only" />
           </label>
         </div>
 
-        <form onSubmit={handleSaveProfile} className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-[#5c5a54] dark:text-[#b0b0b0] mb-1">
-                Full Name
-              </label>
-              <input
-                type="text"
-                required
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                className="w-full px-3 py-2 text-sm bg-[#f5f4f0] dark:bg-[#303030] border border-[#d8d4ca] dark:border-[#404040]"
-              />
-            </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1">
+              Display Name
+            </label>
+            <input
+              type="text"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              className="w-full px-3 py-2 rounded-control text-sm bg-[#f5f4f0] dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1">
+              @Username
+            </label>
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(normalizeUsername(e.target.value))}
+              className="w-full px-3 py-2 rounded-control text-sm bg-[#f5f4f0] dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+            />
+          </div>
+        </div>
 
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-[#5c5a54] dark:text-[#b0b0b0] mb-1">
-                Registered Email
-              </label>
-              <input
-                type="email"
-                readOnly
-                value={userProfile?.email || ''}
-                className="w-full px-3 py-2 text-sm bg-[#eae7e0] dark:bg-[#171717] border border-[#d8d4ca] dark:border-[#404040] text-[#5c5a54] dark:text-[#b0b0b0]"
-              />
-            </div>
+        <div>
+          <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1">
+            Bio
+          </label>
+          <textarea
+            rows={2}
+            value={bio}
+            onChange={(e) => setBio(e.target.value)}
+            className="w-full px-3 py-2 rounded-control text-sm bg-[#f5f4f0] dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+          />
+        </div>
 
-            <div className="sm:col-span-2">
-              <label className="block text-xs font-semibold uppercase tracking-wider text-[#5c5a54] dark:text-[#b0b0b0] mb-1">
-                Default Aesthetic Preference
-              </label>
-              <select
-                value={stylePreference}
-                onChange={(e) => setStylePreference(e.target.value)}
-                className="w-full px-3 py-2 text-sm bg-[#f5f4f0] dark:bg-[#303030] border border-[#d8d4ca] dark:border-[#404040]"
-              >
-                {STYLE_CATEGORIES.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
-            </div>
+        <div>
+          <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1.5">
+            Style Tags
+          </label>
+          <div className="flex flex-wrap gap-1.5">
+            {STYLE_CATEGORIES.map((tag) => {
+              const active = styleTags.includes(tag);
+              return (
+                <button
+                  key={tag}
+                  type="button"
+                  onClick={() =>
+                    setStyleTags((prev) =>
+                      prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]
+                    )
+                  }
+                  className={`px-2.5 py-1 rounded-chip text-xs border cursor-pointer ${
+                    active
+                      ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717]'
+                      : 'border-[#d4cfc5] dark:border-[#404040]'
+                  }`}
+                >
+                  {tag}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-[#d4cfc5] dark:border-[#404040]">
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1">
+              Default Wardrobe Visibility
+            </label>
+            <select
+              value={defaultItemVis}
+              onChange={(e) => setDefaultItemVis(e.target.value as Visibility)}
+              className="w-full px-3 py-2 rounded-control text-xs bg-[#f5f4f0] dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+            >
+              <option value="public">Public</option>
+              <option value="followers">Followers only</option>
+              <option value="private">Private</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1">
+              Default Lookbook Visibility
+            </label>
+            <select
+              value={defaultOutfitVis}
+              onChange={(e) => setDefaultOutfitVis(e.target.value as Visibility)}
+              className="w-full px-3 py-2 rounded-control text-xs bg-[#f5f4f0] dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+            >
+              <option value="public">Public</option>
+              <option value="followers">Followers only</option>
+              <option value="private">Private</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="space-y-2 text-xs">
+          <label className="flex items-center gap-2.5 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={!isPublic}
+              onChange={(e) => setIsPublic(!e.target.checked)}
+              className="accent-[#171717] dark:accent-[#e5e1da]"
+            />
+            <Lock className="w-3.5 h-3.5" />
+            <span>Private account (require follow approval)</span>
+          </label>
+
+          <label className="flex items-center gap-2.5 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={autoDirtyOnWear}
+              onChange={(e) => setAutoDirtyOnWear(e.target.checked)}
+              className="accent-[#171717] dark:accent-[#e5e1da]"
+            />
+            <span>Automatically mark garments &ldquo;Dirty&rdquo; when clicking &ldquo;Wore this today&rdquo;</span>
+          </label>
+        </div>
+
+        <div className="flex items-center justify-between pt-2">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-[#4e4c46] dark:text-[#c2bfb8]">Theme:</span>
+            <button
+              type="button"
+              onClick={() => {
+                const next = theme === 'dark' ? 'light' : 'dark';
+                setTheme(next);
+                updateAccountProfile({ theme: next }).catch(() => {});
+              }}
+              className="px-3 py-1 rounded-chip border border-[#d4cfc5] dark:border-[#404040] text-xs font-semibold cursor-pointer capitalize"
+            >
+              {theme} Mode
+            </button>
           </div>
 
           <button
             type="submit"
-            disabled={savingProfile}
-            className="px-5 py-2.5 bg-[#171717] dark:bg-[#e5e1da] text-[#f5f4f0] dark:text-[#171717] text-xs font-semibold cursor-pointer"
+            disabled={saving}
+            className="px-5 py-2.5 rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
           >
-            {savingProfile ? 'Saving...' : 'Save Profile Changes'}
-          </button>
-        </form>
-      </section>
-
-      {/* Theme Appearance */}
-      <section className="bg-white dark:bg-[#242424] border border-[#d8d4ca] dark:border-[#404040] p-6 space-y-4">
-        <h2 className="font-display text-lg font-bold pb-3 border-b border-[#d8d4ca] dark:border-[#404040]">
-          CONCRETE Appearance
-        </h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <button
-            type="button"
-            onClick={() => handleThemeSelect('dark')}
-            className={`p-4 border text-left flex items-center justify-between transition-colors cursor-pointer ${
-              theme === 'dark'
-                ? 'bg-[#171717] text-[#e5e1da] border-[#e5e1da]'
-                : 'bg-[#f5f4f0] dark:bg-[#303030] border-[#d8d4ca] dark:border-[#404040]'
-            }`}
-          >
-            <div>
-              <p className="text-xs font-semibold">Dark Mode (CONCRETE)</p>
-              <p className="text-[11px] opacity-75 mt-0.5">Charcoal #171717 & Bone #E5E1DA</p>
-            </div>
-            <Moon className="w-4 h-4 shrink-0" />
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleThemeSelect('light')}
-            className={`p-4 border text-left flex items-center justify-between transition-colors cursor-pointer ${
-              theme === 'light'
-                ? 'bg-[#171717] text-[#f5f4f0] border-[#171717]'
-                : 'bg-[#f5f4f0] dark:bg-[#303030] border-[#d8d4ca] dark:border-[#404040]'
-            }`}
-          >
-            <div>
-              <p className="text-xs font-semibold">Light Mode (Editorial)</p>
-              <p className="text-[11px] opacity-75 mt-0.5">Warm Off-White & Concrete Gray</p>
-            </div>
-            <Sun className="w-4 h-4 shrink-0" />
+            <Save className="w-3.5 h-3.5" />
+            <span>{saving ? 'Saving...' : 'Save Settings'}</span>
           </button>
         </div>
-      </section>
+      </form>
 
-      {/* Security / Change Password */}
-      <section className="bg-white dark:bg-[#242424] border border-[#d8d4ca] dark:border-[#404040] p-6 space-y-4">
-        <div className="flex items-center gap-2 pb-3 border-b border-[#d8d4ca] dark:border-[#404040]">
-          <KeyRound className="w-4 h-4" />
-          <h2 className="font-display text-lg font-bold">Security & Password</h2>
+      {/* Blocked & Muted Users */}
+      <section className="p-6 rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] space-y-3">
+        <div className="flex items-center gap-2">
+          <Shield className="w-4 h-4" />
+          <h2 className="font-display font-bold text-base">Blocked & Muted Accounts</h2>
         </div>
 
-        {isDemoMode ? (
-          <p className="text-xs text-[#5c5a54] dark:text-[#b0b0b0]">
-            Password management is disabled in Demo Mode. Sign out and create a personal account to manage credentials.
+        {blockedEdges.length === 0 && mutedEdges.length === 0 ? (
+          <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8]">
+            You haven&rsquo;t blocked or muted any accounts.
           </p>
         ) : (
-          <form onSubmit={handlePasswordChange} className="space-y-3.5">
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-[#5c5a54] dark:text-[#b0b0b0] mb-1">
-                Current Password
-              </label>
+          <div className="space-y-2 text-xs">
+            {blockedEdges.map((b) => (
+              <div key={b.id} className="flex items-center justify-between p-2.5 rounded-control bg-[#f5f4f0] dark:bg-[#171717]">
+                <span>Blocked: @{b.targetUsername}</span>
+                <button
+                  type="button"
+                  onClick={() => toggleBlock({ uid: b.targetId, username: b.targetUsername })}
+                  className="underline cursor-pointer"
+                >
+                  Unblock
+                </button>
+              </div>
+            ))}
+            {mutedEdges.map((m) => (
+              <div key={m.id} className="flex items-center justify-between p-2.5 rounded-control bg-[#f5f4f0] dark:bg-[#171717]">
+                <span>Muted: @{m.targetUsername}</span>
+                <button
+                  type="button"
+                  onClick={() => toggleMute({ uid: m.targetId, username: m.targetUsername })}
+                  className="underline cursor-pointer"
+                >
+                  Unmute
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Data Export & Password */}
+      <section className="p-6 rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] space-y-4">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h2 className="font-display font-bold text-base">Export Your Data</h2>
+            <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8]">
+              Download your wardrobe, outfits, wishlist, planner, and wear logs as JSON.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleExportJson}
+            className="px-4 py-2 rounded-control border border-[#d4cfc5] dark:border-[#404040] text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>Download JSON</span>
+          </button>
+        </div>
+
+        {!isDemoMode && (
+          <form onSubmit={handleUpdatePassword} className="pt-4 border-t border-[#d4cfc5] dark:border-[#404040] space-y-3">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8]">
+              Change Password (Email Accounts)
+            </h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <input
                 type="password"
-                required
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                className="w-full px-3 py-2 text-sm bg-[#f5f4f0] dark:bg-[#303030] border border-[#d8d4ca] dark:border-[#404040]"
+                value={currentPwd}
+                onChange={(e) => setCurrentPwd(e.target.value)}
+                placeholder="Current password"
+                className="px-3 py-2 rounded-control text-xs bg-[#f5f4f0] dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+              />
+              <input
+                type="password"
+                value={newPwd}
+                onChange={(e) => setNewPwd(e.target.value)}
+                placeholder="New password (6+ chars)"
+                className="px-3 py-2 rounded-control text-xs bg-[#f5f4f0] dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
               />
             </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-[#5c5a54] dark:text-[#b0b0b0] mb-1">
-                  New Password
-                </label>
-                <input
-                  type="password"
-                  required
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  className="w-full px-3 py-2 text-sm bg-[#f5f4f0] dark:bg-[#303030] border border-[#d8d4ca] dark:border-[#404040]"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-[#5c5a54] dark:text-[#b0b0b0] mb-1">
-                  Confirm New Password
-                </label>
-                <input
-                  type="password"
-                  required
-                  value={confirmNewPassword}
-                  onChange={(e) => setConfirmNewPassword(e.target.value)}
-                  className="w-full px-3 py-2 text-sm bg-[#f5f4f0] dark:bg-[#303030] border border-[#d8d4ca] dark:border-[#404040]"
-                />
-              </div>
-            </div>
-
             <button
               type="submit"
-              disabled={savingPassword}
-              className="px-5 py-2.5 bg-[#171717] dark:bg-[#e5e1da] text-[#f5f4f0] dark:text-[#171717] text-xs font-semibold cursor-pointer"
+              className="px-4 py-2 rounded-control border border-[#d4cfc5] dark:border-[#404040] text-xs font-semibold cursor-pointer"
             >
-              {savingPassword ? 'Updating...' : 'Update Password'}
+              Update Password
             </button>
           </form>
         )}
       </section>
 
-      {/* Sign Out */}
-      <section className="pt-2">
-        <button
-          type="button"
-          onClick={signOutUser}
-          className="px-5 py-2.5 border border-red-500/40 text-red-600 dark:text-red-400 hover:bg-red-500/10 text-xs font-semibold inline-flex items-center gap-2 cursor-pointer"
-        >
-          <LogOut className="w-4 h-4" />
-          <span>Sign Out of SWOOOSH</span>
-        </button>
+      {/* Delete Account */}
+      <section className="p-6 rounded-card border border-red-500/40 bg-red-500/5 space-y-3">
+        <h2 className="font-display font-bold text-base text-red-700 dark:text-red-300">
+          Delete Account & All Content
+        </h2>
+        <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8]">
+          Permanently removes your wardrobe, outfits, posts, media, and profile from SWOOOSH.
+        </p>
+        {!confirmDelete ? (
+          <button
+            type="button"
+            onClick={() => setConfirmDelete(true)}
+            className="px-4 py-2 rounded-control border border-red-500/60 text-red-700 dark:text-red-300 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>Delete Account</span>
+          </button>
+        ) : (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await deleteAccount();
+                  onToast('Account deleted.');
+                } catch (err: any) {
+                  onToast(err?.message || 'Please sign in again before deleting.', 'error');
+                }
+              }}
+              className="px-4 py-2 rounded-control bg-red-700 text-white text-xs font-semibold cursor-pointer"
+            >
+              Confirm Permanent Deletion
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirmDelete(false)}
+              className="px-3 py-2 rounded-control border border-[#d4cfc5] dark:border-[#404040] text-xs cursor-pointer"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
       </section>
     </div>
   );

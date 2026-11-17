@@ -1,11 +1,11 @@
-import React, { useMemo, useState } from 'react';
-import { CLOTHING_CATEGORIES, WishlistItem } from '../types';
+import React, { useState } from 'react';
+import { CLOTHING_CATEGORIES, STYLE_CATEGORIES, Visibility, WishlistItem } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useWardrobe } from '../context/WardrobeContext';
 import { uploadImageAsset } from '../services/storageService';
-import { formatCurrency } from '../utils/formatters';
 import { GarmentImage } from './GarmentImage';
-import { Plus, Upload, Check, Pencil, Trash2, ExternalLink, X } from 'lucide-react';
+import { VisibilityBadge } from './VisibilityBadge';
+import { Plus, CheckCircle2, Trash2, ArrowRightCircle, Upload, X } from 'lucide-react';
 
 interface WishlistPageProps {
   onToast: (msg: string, type?: 'success' | 'error') => void;
@@ -13,113 +13,73 @@ interface WishlistPageProps {
 
 export const WishlistPage: React.FC<WishlistPageProps> = ({ onToast }) => {
   const { userProfile, isDemoMode } = useAuth();
-  const { wishlist, addWishlist, editWishlist, removeWishlist, togglePurchasedWishlist } =
-    useWardrobe();
+  const { wishlist, addWishlist, editWishlist, removeWishlist, markWishlistGotItAndMove } = useWardrobe();
 
-  const [categoryFilter, setCategoryFilter] = useState('All');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'purchased'>('all');
-
-  const [formOpen, setFormOpen] = useState(false);
-  const [editingItem, setEditingItem] = useState<WishlistItem | null>(null);
+  const [filterStatus, setFilterStatus] = useState<'all' | 'wanted' | 'got_it'>('all');
+  const [modalOpen, setModalOpen] = useState(false);
 
   const [name, setName] = useState('');
   const [brand, setBrand] = useState('');
   const [category, setCategory] = useState('Sneakers');
-  const [price, setPrice] = useState('');
-  const [productUrl, setProductUrl] = useState('');
+  const [colorInput, setColorInput] = useState('Charcoal');
+  const [styleTags, setStyleTags] = useState<string[]>(['Streetwear']);
+  const [priority, setPriority] = useState<'low' | 'medium' | 'high'>('medium');
+  const [visibility, setVisibility] = useState<Visibility>('private');
   const [notes, setNotes] = useState('');
-  const [imageUrl, setImageUrl] = useState('');
-  const [storagePath, setStoragePath] = useState('');
-  const [uploading, setUploading] = useState(false);
+  const [photoDataUrl, setPhotoDataUrl] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const filteredItems = useMemo(() => {
-    return wishlist.filter((item) => {
-      if (categoryFilter !== 'All' && item.category !== categoryFilter) return false;
-      if (statusFilter === 'pending' && item.isPurchased) return false;
-      if (statusFilter === 'purchased' && !item.isPurchased) return false;
-      return true;
-    });
-  }, [wishlist, categoryFilter, statusFilter]);
+  const filtered = wishlist.filter((w) => (filterStatus === 'all' ? true : w.status === filterStatus));
 
-  const unpurchasedTotal = useMemo(
-    () => wishlist.filter((w) => !w.isPurchased).reduce((sum, w) => sum + (w.price || 0), 0),
-    [wishlist]
-  );
-
-  const openCreate = () => {
-    setEditingItem(null);
-    setName('');
-    setBrand('');
-    setCategory('Sneakers');
-    setPrice('');
-    setProductUrl('');
-    setNotes('');
-    setImageUrl('');
-    setStoragePath('');
-    setFormOpen(true);
-  };
-
-  const openEdit = (item: WishlistItem) => {
-    setEditingItem(item);
-    setName(item.name);
-    setBrand(item.brand);
-    setCategory(item.category);
-    setPrice(String(item.price));
-    setProductUrl(item.productUrl || '');
-    setNotes(item.notes || '');
-    setImageUrl(item.imageUrl || '');
-    setStoragePath(item.storagePath || '');
-    setFormOpen(true);
-  };
-
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !userProfile) return;
-    setUploading(true);
-    try {
-      const uploaded = await uploadImageAsset(file, userProfile.uid, 'wishlist', isDemoMode);
-      setImageUrl(uploaded.imageUrl);
-      setStoragePath(uploaded.storagePath);
-      onToast('Product image uploaded.');
-    } catch (err: any) {
-      onToast(err.message || 'Image upload failed.', 'error');
-    } finally {
-      setUploading(false);
-    }
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setPhotoDataUrl(String(reader.result || ''));
+    reader.readAsDataURL(file);
   };
 
-  const handleSave = async (e: React.FormEvent) => {
+  const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) {
-      onToast('Product name is required.', 'error');
-      return;
-    }
+    if (!userProfile || !name.trim()) return;
     setSaving(true);
     try {
-      const payload = {
+      let imageUrl: string | undefined;
+      let thumbUrl: string | undefined;
+      let mediaId: string | undefined;
+      if (photoDataUrl) {
+        const uploaded = await uploadImageAsset(photoDataUrl, userProfile.uid, visibility, isDemoMode);
+        imageUrl = uploaded.imageUrl;
+        thumbUrl = uploaded.thumbUrl;
+        mediaId = uploaded.mediaId;
+      }
+
+      await addWishlist({
         name: name.trim(),
-        brand: brand.trim() || 'Independent',
+        brand: brand.trim() || 'Label',
         category,
-        price: Number(price) || 0,
-        productUrl: productUrl.trim(),
+        colorTags: colorInput
+          .split(',')
+          .map((c) => c.trim())
+          .filter(Boolean),
+        styleTags,
+        priority,
+        status: 'wanted',
+        visibility,
         notes: notes.trim(),
         imageUrl,
-        storagePath,
-      };
-      if (editingItem) {
-        await editWishlist(editingItem.id, payload);
-        onToast(`Updated "${payload.name}".`);
-      } else {
-        await addWishlist({
-          ...payload,
-          isPurchased: false,
-        });
-        onToast(`Added "${payload.name}" to Wishlist.`);
-      }
-      setFormOpen(false);
+        thumbUrl,
+        mediaId,
+      });
+
+      setName('');
+      setBrand('');
+      setNotes('');
+      setPhotoDataUrl(null);
+      setModalOpen(false);
+      onToast('Added to Wishlist.');
     } catch (err: any) {
-      onToast(err.message || 'Could not save wishlist item.', 'error');
+      onToast(err?.message || 'Could not add wishlist item.', 'error');
     } finally {
       setSaving(false);
     }
@@ -127,299 +87,292 @@ export const WishlistPage: React.FC<WishlistPageProps> = ({ onToast }) => {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 pb-5 border-b border-[#d8d4ca] dark:border-[#404040]">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <p className="text-xs uppercase tracking-[0.18em] text-[#5c5a54] dark:text-[#b0b0b0]">
-            Acquisition Targets
+          <h1 className="font-display text-2xl font-bold tracking-tight">Style Wishlist</h1>
+          <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8]">
+            Track silhouettes and pieces on your radar—private by default, zero prices or store links.
           </p>
-          <h1 className="font-display text-3xl font-bold tracking-tight mt-1">
-            Wishlist
-          </h1>
         </div>
 
-        <div className="flex items-center gap-4">
-          <div className="text-right">
-            <p className="text-[11px] uppercase tracking-wider text-[#5c5a54] dark:text-[#b0b0b0]">
-              Estimated Unpurchased Cost
-            </p>
-            <p className="font-mono-num text-xl font-bold">{formatCurrency(unpurchasedTotal)}</p>
-          </div>
-          <button
-            type="button"
-            onClick={openCreate}
-            className="px-4 py-2.5 bg-[#171717] dark:bg-[#e5e1da] text-[#f5f4f0] dark:text-[#171717] text-xs font-semibold flex items-center gap-2 cursor-pointer whitespace-nowrap"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Add Item</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Filters */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="inline-flex p-1 bg-[#eae7e0] dark:bg-[#303030] border border-[#d8d4ca] dark:border-[#404040]">
-          {(['all', 'pending', 'purchased'] as const).map((status) => (
-            <button
-              key={status}
-              type="button"
-              onClick={() => setStatusFilter(status)}
-              className={`px-3 py-1.5 text-xs font-medium capitalize transition-colors cursor-pointer ${
-                statusFilter === status
-                  ? 'bg-white dark:bg-[#171717] text-[#171717] dark:text-[#e5e1da]'
-                  : 'text-[#5c5a54] dark:text-[#b0b0b0]'
-              }`}
-            >
-              {status === 'pending' ? 'To Buy' : status}
-            </button>
-          ))}
-        </div>
-
-        <select
-          value={categoryFilter}
-          onChange={(e) => setCategoryFilter(e.target.value)}
-          className="px-3 py-2 text-xs bg-white dark:bg-[#242424] border border-[#d8d4ca] dark:border-[#404040]"
+        <button
+          type="button"
+          onClick={() => setModalOpen(true)}
+          className="px-5 py-2.5 rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-semibold flex items-center gap-2 cursor-pointer self-start sm:self-auto"
         >
-          <option value="All">All Categories</option>
-          {CLOTHING_CATEGORIES.map((cat) => (
-            <option key={cat} value={cat}>
-              {cat}
-            </option>
-          ))}
-        </select>
+          <Plus className="w-4 h-4" />
+          <span>Add Piece Idea</span>
+        </button>
       </div>
 
-      {/* Grid */}
-      {wishlist.length === 0 ? (
-        <div className="p-14 bg-white dark:bg-[#242424] border border-[#d8d4ca] dark:border-[#404040] text-center space-y-3">
-          <h3 className="font-display text-xl font-bold">Your wishlist is clear</h3>
-          <p className="text-xs text-[#5c5a54] dark:text-[#b0b0b0] max-w-md mx-auto">
-            Track upcoming footwear, jackets, and archive pieces with estimated prices and store links.
-          </p>
+      <div className="flex gap-1.5">
+        {(
+          [
+            { id: 'all', label: `All (${wishlist.length})` },
+            { id: 'wanted', label: 'Wanted' },
+            { id: 'got_it', label: 'Got it' },
+          ] as const
+        ).map((tab) => (
           <button
+            key={tab.id}
             type="button"
-            onClick={openCreate}
-            className="px-5 py-2.5 bg-[#171717] dark:bg-[#e5e1da] text-[#f5f4f0] dark:text-[#171717] text-xs font-semibold cursor-pointer"
+            onClick={() => setFilterStatus(tab.id)}
+            className={`px-3.5 py-1.5 rounded-chip text-xs font-semibold border cursor-pointer ${
+              filterStatus === tab.id
+                ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-transparent'
+                : 'border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424]'
+            }`}
           >
-            Add Wishlist Piece
+            {tab.label}
           </button>
-        </div>
-      ) : filteredItems.length === 0 ? (
-        <div className="p-10 bg-white dark:bg-[#242424] border border-[#d8d4ca] dark:border-[#404040] text-center text-xs text-[#5c5a54] dark:text-[#b0b0b0]">
-          No wishlist items match this filter.
+        ))}
+      </div>
+
+      {filtered.length === 0 ? (
+        <div className="p-10 rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] text-center space-y-2">
+          <p className="font-display font-bold text-base">Your wishlist is clear</p>
+          <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8]">
+            Save inspiration pieces and move them to My Wardrobe once you own them.
+          </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {filteredItems.map((item) => (
-            <article
-              key={item.id}
-              className={`bg-white dark:bg-[#242424] border border-[#d8d4ca] dark:border-[#404040] flex flex-col justify-between ${
-                item.isPurchased ? 'opacity-65' : ''
-              }`}
-            >
-              <div>
-                <div className="aspect-[4/3] bg-[#eae7e0] dark:bg-[#303030] overflow-hidden">
-                  <GarmentImage src={item.imageUrl} alt={item.name} />
-                </div>
-                <div className="p-4 space-y-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="text-[11px] text-[#5c5a54] dark:text-[#b0b0b0]">
-                        {item.brand} · {item.category}
-                        {item.isPurchased ? ' · Purchased' : ''}
-                      </p>
-                      <h3 className="font-semibold text-sm truncate mt-0.5">{item.name}</h3>
-                    </div>
-                    <span className="font-mono-num text-sm font-bold shrink-0">
-                      {formatCurrency(item.price)}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {filtered.map((item: WishlistItem) => {
+            const nextVis =
+              item.visibility === 'private'
+                ? 'public'
+                : item.visibility === 'public'
+                ? 'followers'
+                : 'private';
+
+            return (
+              <article
+                key={item.id}
+                className="rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] overflow-hidden flex flex-col shadow-sm"
+              >
+                <div className="relative h-48 bg-[#eae7e0] dark:bg-[#171717]">
+                  <GarmentImage
+                    src={item.thumbUrl || item.imageUrl}
+                    alt={item.name}
+                    fallbackLabel={item.name}
+                  />
+                  <div className="absolute top-2.5 left-2.5">
+                    <span className="px-2 py-1 rounded-chip text-[10px] font-mono-num uppercase tracking-wider bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717]">
+                      {item.priority} priority
                     </span>
                   </div>
-                  {item.notes && (
-                    <p className="text-xs text-[#5c5a54] dark:text-[#b0b0b0] line-clamp-2">
-                      {item.notes}
-                    </p>
-                  )}
+                  <div className="absolute top-2.5 right-2.5">
+                    <VisibilityBadge
+                      visibility={item.visibility || 'private'}
+                      onClick={() => editWishlist(item.id, { visibility: nextVis })}
+                    />
+                  </div>
                 </div>
-              </div>
 
-              <div className="p-4 pt-3 border-t border-[#d8d4ca] dark:border-[#404040] flex items-center justify-between gap-2 text-xs">
-                <button
-                  type="button"
-                  onClick={() => togglePurchasedWishlist(item)}
-                  className={`px-2.5 py-1.5 border text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer ${
-                    item.isPurchased
-                      ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-[#171717] dark:border-[#e5e1da]'
-                      : 'border-[#d8d4ca] dark:border-[#404040] hover:border-[#171717] dark:hover:border-[#e5e1da]'
-                  }`}
-                >
-                  <Check className="w-3.5 h-3.5" />
-                  <span>{item.isPurchased ? 'Purchased' : 'Mark Purchased'}</span>
-                </button>
+                <div className="p-4 flex-1 flex flex-col justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-[11px] text-[#4e4c46] dark:text-[#c2bfb8]">
+                      <span className="font-semibold uppercase tracking-wider">{item.brand}</span>
+                      <span>{item.category}</span>
+                    </div>
+                    <h3 className="font-display font-bold text-base">{item.name}</h3>
+                    {item.notes && (
+                      <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8] line-clamp-2">
+                        {item.notes}
+                      </p>
+                    )}
+                    <div className="flex flex-wrap gap-1 pt-1">
+                      {item.colorTags?.map((c) => (
+                        <span
+                          key={c}
+                          className="px-2 py-0.5 rounded-chip text-[10px] bg-[#eae7e0] dark:bg-[#303030]"
+                        >
+                          {c}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
 
-                <div className="flex items-center gap-1.5">
-                  {item.productUrl && (
-                    <a
-                      href={item.productUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      title="Open Store Link"
-                      className="p-1.5 border border-[#d8d4ca] dark:border-[#404040] hover:border-[#171717] dark:hover:border-[#e5e1da]"
+                  <div className="pt-3 border-t border-[#d4cfc5]/70 dark:border-[#404040]/70 flex items-center justify-between gap-2">
+                    {item.status === 'wanted' ? (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await markWishlistGotItAndMove(item);
+                          onToast(`Moved "${item.name}" to My Wardrobe!`);
+                        }}
+                        className="px-3 py-1.5 rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <ArrowRightCircle className="w-3.5 h-3.5" />
+                        <span>Got it → Wardrobe</span>
+                      </button>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>In Wardrobe</span>
+                      </span>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await removeWishlist(item);
+                        onToast('Removed from Wishlist.');
+                      }}
+                      aria-label={`Delete ${item.name}`}
+                      className="p-2 rounded-control hover:bg-red-500/15 text-red-600 dark:text-red-400 cursor-pointer"
                     >
-                      <ExternalLink className="w-3.5 h-3.5" />
-                    </a>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => openEdit(item)}
-                    title="Edit item"
-                    className="p-1.5 border border-[#d8d4ca] dark:border-[#404040] hover:border-[#171717] dark:hover:border-[#e5e1da] cursor-pointer"
-                  >
-                    <Pencil className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => removeWishlist(item).then(() => onToast(`Deleted "${item.name}".`))}
-                    title="Delete item"
-                    className="p-1.5 border border-[#d8d4ca] dark:border-[#404040] text-red-600 dark:text-red-400 hover:border-red-500 cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
-              </div>
-            </article>
-          ))}
+              </article>
+            );
+          })}
         </div>
       )}
 
-      {/* Modal */}
-      {formOpen && (
-        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-[#242424] border border-[#d8d4ca] dark:border-[#404040] max-w-lg w-full max-h-[90vh] overflow-y-auto p-6 space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-[#d8d4ca] dark:border-[#404040]">
-              <h2 className="font-display text-lg font-bold">
-                {editingItem ? 'Edit Wishlist Item' : 'Add Wishlist Item'}
+      {/* Add Modal */}
+      {modalOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/65 backdrop-blur-xs flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="wishlist-modal-title"
+        >
+          <div className="w-full max-w-md rounded-modal bg-[#f5f4f0] dark:bg-[#242424] border border-[#d4cfc5] dark:border-[#404040] p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h2 id="wishlist-modal-title" className="font-display font-bold text-lg">
+                Add to Wishlist
               </h2>
               <button
                 type="button"
-                onClick={() => setFormOpen(false)}
-                className="p-1 text-[#5c5a54] dark:text-[#b0b0b0] cursor-pointer"
+                onClick={() => setModalOpen(false)}
+                aria-label="Close modal"
+                className="p-2 rounded-control hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <form onSubmit={handleSave} className="space-y-4">
-              <div className="flex items-center gap-4">
-                <div className="w-20 h-20 shrink-0 bg-[#eae7e0] dark:bg-[#303030] border border-[#d8d4ca] dark:border-[#404040] overflow-hidden">
-                  <GarmentImage src={imageUrl} alt={name || 'Product'} />
-                </div>
-                <label className="inline-flex items-center gap-2 px-3.5 py-2 border border-[#d8d4ca] dark:border-[#404040] text-xs font-medium cursor-pointer">
-                  <Upload className="w-3.5 h-3.5" />
-                  <span>{uploading ? 'Uploading...' : 'Upload Product Photo'}</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handleImageUpload}
-                    disabled={uploading}
-                    className="hidden"
-                  />
-                </label>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                <div className="sm:col-span-2">
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-[#5c5a54] dark:text-[#b0b0b0] mb-1">
-                    Product Name *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    className="w-full px-3 py-2 text-sm bg-[#f5f4f0] dark:bg-[#303030] border border-[#d8d4ca] dark:border-[#404040]"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-[#5c5a54] dark:text-[#b0b0b0] mb-1">
-                    Brand
-                  </label>
-                  <input
-                    type="text"
-                    value={brand}
-                    onChange={(e) => setBrand(e.target.value)}
-                    className="w-full px-3 py-2 text-sm bg-[#f5f4f0] dark:bg-[#303030] border border-[#d8d4ca] dark:border-[#404040]"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-[#5c5a54] dark:text-[#b0b0b0] mb-1">
-                    Category
-                  </label>
-                  <select
-                    value={category}
-                    onChange={(e) => setCategory(e.target.value)}
-                    className="w-full px-3 py-2 text-sm bg-[#f5f4f0] dark:bg-[#303030] border border-[#d8d4ca] dark:border-[#404040]"
+            <form onSubmit={handleAdd} className="space-y-3.5">
+              {photoDataUrl ? (
+                <div className="relative h-36 rounded-card overflow-hidden border border-[#d4cfc5] dark:border-[#404040]">
+                  <GarmentImage src={photoDataUrl} alt="Wishlist preview" />
+                  <button
+                    type="button"
+                    onClick={() => setPhotoDataUrl(null)}
+                    className="absolute top-2 right-2 p-1 rounded-full bg-black/70 text-white cursor-pointer"
                   >
-                    {CLOTHING_CATEGORIES.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))}
-                  </select>
+                    <X className="w-3.5 h-3.5" />
+                  </button>
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-[#5c5a54] dark:text-[#b0b0b0] mb-1">
-                    Price ($)
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={price}
-                    onChange={(e) => setPrice(e.target.value)}
-                    className="w-full px-3 py-2 text-sm bg-[#f5f4f0] dark:bg-[#303030] border border-[#d8d4ca] dark:border-[#404040]"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-[#5c5a54] dark:text-[#b0b0b0] mb-1">
-                    Store Link (Optional)
-                  </label>
-                  <input
-                    type="url"
-                    value={productUrl}
-                    onChange={(e) => setProductUrl(e.target.value)}
-                    placeholder="https://..."
-                    className="w-full px-3 py-2 text-sm bg-[#f5f4f0] dark:bg-[#303030] border border-[#d8d4ca] dark:border-[#404040]"
-                  />
-                </div>
-                <div className="sm:col-span-2">
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-[#5c5a54] dark:text-[#b0b0b0] mb-1">
-                    Notes (Optional)
-                  </label>
-                  <textarea
-                    rows={2}
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                    className="w-full px-3 py-2 text-sm bg-[#f5f4f0] dark:bg-[#303030] border border-[#d8d4ca] dark:border-[#404040]"
-                  />
-                </div>
+              ) : (
+                <label className="flex items-center justify-center gap-2 p-3.5 rounded-control border border-dashed border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#171717] text-xs cursor-pointer">
+                  <Upload className="w-4 h-4" />
+                  <span>Upload reference photo (optional)</span>
+                  <input type="file" accept="image/*" onChange={handleFile} className="sr-only" />
+                </label>
+              )}
+
+              <input
+                type="text"
+                required
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Piece name (e.g., Pleated Wide Wool Trousers)"
+                className="w-full px-3 py-2 rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+              />
+
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  type="text"
+                  value={brand}
+                  onChange={(e) => setBrand(e.target.value)}
+                  placeholder="Brand / Studio"
+                  className="w-full px-3 py-2 rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+                />
+                <select
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  className="w-full px-3 py-2 rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+                >
+                  {CLOTHING_CATEGORIES.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
               </div>
 
-              <div className="flex justify-end gap-2 pt-3 border-t border-[#d8d4ca] dark:border-[#404040]">
-                <button
-                  type="button"
-                  onClick={() => setFormOpen(false)}
-                  className="px-4 py-2 text-xs font-medium border border-[#d8d4ca] dark:border-[#404040] cursor-pointer"
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  type="text"
+                  value={colorInput}
+                  onChange={(e) => setColorInput(e.target.value)}
+                  placeholder="Colors (Charcoal, Bone)"
+                  className="w-full px-3 py-2 rounded-control text-xs bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+                />
+                <select
+                  value={priority}
+                  onChange={(e) => setPriority(e.target.value as any)}
+                  className="w-full px-3 py-2 rounded-control text-xs bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
                 >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving || uploading}
-                  className="px-5 py-2 text-xs font-semibold bg-[#171717] dark:bg-[#e5e1da] text-[#f5f4f0] dark:text-[#171717] cursor-pointer"
-                >
-                  {saving ? 'Saving...' : editingItem ? 'Update Item' : 'Add to Wishlist'}
-                </button>
+                  <option value="high">High priority</option>
+                  <option value="medium">Medium priority</option>
+                  <option value="low">Low priority</option>
+                </select>
               </div>
+
+              <div className="flex flex-wrap gap-1">
+                {STYLE_CATEGORIES.slice(0, 5).map((tag) => {
+                  const active = styleTags.includes(tag);
+                  return (
+                    <button
+                      key={tag}
+                      type="button"
+                      onClick={() =>
+                        setStyleTags((prev) =>
+                          prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]
+                        )
+                      }
+                      className={`px-2 py-1 rounded-chip text-[11px] border cursor-pointer ${
+                        active
+                          ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717]'
+                          : 'border-[#d4cfc5] dark:border-[#404040]'
+                      }`}
+                    >
+                      {tag}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <select
+                value={visibility}
+                onChange={(e) => setVisibility(e.target.value as Visibility)}
+                className="w-full px-3 py-2 rounded-control text-xs bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+              >
+                <option value="private">Private (Default — only visible to you)</option>
+                <option value="followers">Followers</option>
+                <option value="public">Public</option>
+              </select>
+
+              <textarea
+                rows={2}
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="How this fits into your rotation..."
+                className="w-full px-3 py-2 rounded-control text-xs bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+              />
+
+              <button
+                type="submit"
+                disabled={saving}
+                className="w-full py-2.5 px-4 rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-semibold cursor-pointer disabled:opacity-50"
+              >
+                {saving ? 'Saving...' : 'Save to Wishlist'}
+              </button>
             </form>
           </div>
         </div>

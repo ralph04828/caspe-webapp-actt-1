@@ -1,28 +1,49 @@
+import { auth } from '../firebase';
 import {
+  AIAutoTagResponse,
   AIColorMatchResponse,
   AIMissingPiecesResponse,
   AIOutfitFeedbackResponse,
   AIOutfitGeneratorResponse,
+  AIQuotaStatus,
+  AIRemixResponse,
   AIStyleRecommendationResponse,
   ClothingItem,
+  OutfitPieceSnapshot,
 } from '../types';
 
 function serializeWardrobe(wardrobe: ClothingItem[]) {
-  return wardrobe.map((item) => ({
+  return wardrobe.slice(0, 60).map((item) => ({
     id: item.id,
     name: item.name,
     category: item.category,
     brand: item.brand,
     color: item.color,
     size: item.size,
+    seasons: item.seasons || [],
+    styleTags: item.styleTags || [],
+    laundryStatus: item.laundryStatus || 'clean',
     description: item.description || '',
   }));
 }
 
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const user = auth.currentUser;
+  if (user) {
+    const token = await user.getIdToken();
+    headers['Authorization'] = `Bearer ${token}`;
+  } else {
+    headers['X-Swooosh-Demo'] = 'true';
+  }
+  return headers;
+}
+
 async function postAI<T>(endpoint: string, body: unknown): Promise<T> {
+  const headers = await getAuthHeaders();
   const res = await fetch(endpoint, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(body),
   });
 
@@ -33,13 +54,16 @@ async function postAI<T>(endpoint: string, body: unknown): Promise<T> {
   return data as T;
 }
 
-export async function checkAIStatus(): Promise<{ configured: boolean }> {
+export async function checkAIStatus(): Promise<AIQuotaStatus> {
   try {
-    const res = await fetch('/api/ai/status');
-    if (!res.ok) return { configured: false };
+    const headers = await getAuthHeaders();
+    const res = await fetch('/api/ai/status', { headers });
+    if (!res.ok) {
+      return { configured: false, used: 0, limit: 20, remaining: 20, isDemo: !auth.currentUser };
+    }
     return await res.json();
   } catch {
-    return { configured: false };
+    return { configured: false, used: 0, limit: 20, remaining: 20, isDemo: !auth.currentUser };
   }
 }
 
@@ -51,10 +75,17 @@ export async function generateAIOutfit(
     colors: string;
     weather: string;
     notes: string;
+    cleanOnly?: boolean;
   }
 ): Promise<AIOutfitGeneratorResponse> {
+  const pool =
+    preferences.cleanOnly !== false
+      ? wardrobe.filter((w) => w.laundryStatus === 'clean')
+      : wardrobe;
+  const activePool = pool.length > 0 ? pool : wardrobe;
+
   return postAI<AIOutfitGeneratorResponse>('/api/ai/generate-outfit', {
-    wardrobe: serializeWardrobe(wardrobe),
+    wardrobe: serializeWardrobe(activePool),
     preferences,
   });
 }
@@ -81,6 +112,9 @@ export async function getAIColorMatch(
       brand: targetItem.brand,
       color: targetItem.color,
       size: targetItem.size,
+      seasons: targetItem.seasons || [],
+      styleTags: targetItem.styleTags || [],
+      laundryStatus: targetItem.laundryStatus || 'clean',
       description: targetItem.description || '',
     },
     wardrobe: serializeWardrobe(wardrobe),
@@ -102,9 +136,9 @@ export async function getAIOutfitFeedback(
 export async function sendAIFashionChat(
   messages: { role: 'user' | 'assistant'; content: string }[],
   wardrobe: ClothingItem[]
-): Promise<{ reply: string }> {
-  return postAI<{ reply: string }>('/api/ai/chat', {
-    messages,
+): Promise<{ reply: string; quota?: AIQuotaStatus }> {
+  return postAI<{ reply: string; quota?: AIQuotaStatus }>('/api/ai/chat', {
+    messages: messages.slice(-10),
     wardrobe: serializeWardrobe(wardrobe),
   });
 }
@@ -114,5 +148,27 @@ export async function getAIMissingPieces(
 ): Promise<AIMissingPiecesResponse> {
   return postAI<AIMissingPiecesResponse>('/api/ai/missing-pieces', {
     wardrobe: serializeWardrobe(wardrobe),
+  });
+}
+
+export async function autoTagGarmentPhoto(
+  imageBase64: string,
+  mimeType: string
+): Promise<AIAutoTagResponse> {
+  return postAI<AIAutoTagResponse>('/api/ai/auto-tag', {
+    imageBase64,
+    mimeType,
+  });
+}
+
+export async function remixOutfitWithAI(
+  sourcePieces: OutfitPieceSnapshot[],
+  wardrobe: ClothingItem[],
+  instruction?: string
+): Promise<AIRemixResponse> {
+  return postAI<AIRemixResponse>('/api/ai/remix-outfit', {
+    sourcePieces: sourcePieces.filter((p) => !p.isPrivatePlaceholder),
+    wardrobe: serializeWardrobe(wardrobe.filter((w) => w.laundryStatus === 'clean')),
+    instruction: instruction || '',
   });
 }

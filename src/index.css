@@ -2,29 +2,46 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
+  /* Light Mode — Warm CONCRETE + WCAG 2.1 AA */
   --bg-primary: #f5f4f0;
   --bg-secondary: #eae7e0;
   --bg-surface: #ffffff;
-  --bg-elevated: #fcfbf9;
-  --border-color: #d8d4ca;
+  --bg-elevated: #f8f7f4;
+  --bg-mica: rgba(245, 244, 240, 0.84);
+  --border-color: #d4cfc5;
   --text-primary: #171717;
-  --text-secondary: #5c5a54;
-  --accent-gray: #78756e;
+  --text-secondary: #4e4c46;
+  --accent-gray: #636059;
   --btn-primary-bg: #171717;
   --btn-primary-text: #f5f4f0;
+
+  /* Windows 11 / Fluent Radius Tokens */
+  --radius-chip: 6px;
+  --radius-control: 8px;
+  --radius-card: 14px;
+  --radius-modal: 20px;
+
+  /* Soft Concrete Elevation */
+  --shadow-card: 0 2px 10px -2px rgba(23, 23, 23, 0.05), 0 1px 3px rgba(23, 23, 23, 0.04);
+  --shadow-modal: 0 20px 50px -12px rgba(23, 23, 23, 0.22);
 }
 
 .dark {
+  /* Dark Mode — CONCRETE Palette with WCAG 2.1 AA Text Contrast */
   --bg-primary: #171717;
   --bg-secondary: #303030;
   --bg-surface: #242424;
   --bg-elevated: #555555;
+  --bg-mica: rgba(23, 23, 23, 0.86);
   --border-color: #404040;
   --text-primary: #e5e1da;
-  --text-secondary: #b0b0b0;
-  --accent-gray: #a5a5a5;
+  --text-secondary: #c2bfb8;
+  --accent-gray: #b5b2ab;
   --btn-primary-bg: #e5e1da;
   --btn-primary-text: #171717;
+
+  --shadow-card: 0 4px 16px -4px rgba(0, 0, 0, 0.35), 0 1px 3px rgba(0, 0, 0, 0.25);
+  --shadow-modal: 0 24px 60px -12px rgba(0, 0, 0, 0.65);
 }
 
 @layer base {
@@ -34,6 +51,7 @@
     color: var(--text-primary);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    scroll-behavior: smooth;
   }
 
   h1, h2, h3, h4, .font-display {
@@ -44,6 +62,56 @@
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     font-variant-numeric: tabular-nums;
   }
+
+  /* Accessible keyboard focus ring */
+  *:focus-visible {
+    outline: 2px solid var(--text-primary);
+    outline-offset: 2px;
+  }
+}
+
+/* Windows 11 Fluent / Mica surfaces with solid fallback */
+.mica-surface {
+  background-color: var(--bg-secondary);
+}
+@supports (backdrop-filter: blur(20px)) {
+  .mica-surface {
+    background-color: var(--bg-mica);
+    backdrop-filter: blur(20px) saturate(140%);
+    -webkit-backdrop-filter: blur(20px) saturate(140%);
+  }
+}
+
+/* Radius helper classes matching Windows 11 / Fluent spec */
+.rounded-chip {
+  border-radius: var(--radius-chip);
+}
+.rounded-control {
+  border-radius: var(--radius-control);
+}
+.rounded-card {
+  border-radius: var(--radius-card);
+}
+.rounded-modal {
+  border-radius: var(--radius-modal);
+}
+
+/* Skip link for keyboard accessibility */
+.skip-link {
+  position: fixed;
+  top: -100px;
+  left: 16px;
+  z-index: 100;
+  padding: 10px 16px;
+  border-radius: var(--radius-control);
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-text);
+  font-size: 13px;
+  font-weight: 600;
+  transition: top 150ms ease;
+}
+.skip-link:focus {
+  top: 16px;
 }
 
 /* Custom Concrete Scrollbar */
@@ -57,15 +125,18 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #404040;
-  border-radius: 3px;
+  background: #a5a5a5;
+  border-radius: 999px;
 }
 
 .dark ::-webkit-scrollbar-thumb {
-  background: #555555;
+  background: #404040;
 }
 
 @media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
   *, ::before, ::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;

@@ -1,8 +1,10 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import {
   ClothingItem,
+  LaundryStatus,
   Outfit,
   OutfitSchedule,
+  WearLog,
   WishlistItem,
 } from '../types';
 import { useAuth } from './AuthContext';
@@ -11,14 +13,18 @@ import {
   DEMO_WARDROBE,
   DEMO_WISHLIST,
   getInitialDemoSchedules,
+  getInitialDemoWearLogs,
+  getTodayISO,
 } from '../data/demoData';
 import {
   subscribeWardrobe,
   subscribeOutfits,
   subscribeWishlist,
   subscribeSchedules,
+  subscribeWearLogs,
   saveClothingItem,
   updateClothingItem,
+  batchMarkWardrobeClean,
   deleteClothingItem,
   saveOutfit,
   updateOutfit,
@@ -29,6 +35,7 @@ import {
   saveSchedule,
   updateSchedule,
   deleteSchedule,
+  saveWearLog,
 } from '../services/firestoreService';
 import { deleteImageAsset } from '../services/storageService';
 
@@ -37,22 +44,27 @@ interface DemoStorageState {
   outfits: Outfit[];
   wishlist: WishlistItem[];
   schedules: OutfitSchedule[];
+  wearLogs: WearLog[];
 }
 
-const DEMO_DATA_KEY = 'swooosh_demo_data_v1';
+const DEMO_DATA_KEY = 'swooosh_demo_data_v2';
 
 interface WardrobeContextType {
   wardrobe: ClothingItem[];
   outfits: Outfit[];
   wishlist: WishlistItem[];
   schedules: OutfitSchedule[];
+  wearLogs: WearLog[];
   loading: boolean;
+  isOnline: boolean;
 
-  // Wardrobe Actions
+  // Wardrobe & Laundry Actions
   addClothing: (item: Omit<ClothingItem, 'id' | 'userId' | 'createdAt'>) => Promise<ClothingItem>;
   editClothing: (id: string, updates: Partial<ClothingItem>) => Promise<void>;
   removeClothing: (item: ClothingItem) => Promise<void>;
-  logWear: (id: string) => Promise<void>;
+  setLaundryStatus: (id: string, status: LaundryStatus) => Promise<void>;
+  markManyClean: (ids: string[]) => Promise<void>;
+  logWearForItems: (itemIds: string[], outfitId?: string, date?: string) => Promise<void>;
 
   // Outfit / Lookbook Actions
   addOutfit: (outfit: Omit<Outfit, 'id' | 'userId' | 'createdAt'>) => Promise<Outfit>;
@@ -60,14 +72,15 @@ interface WardrobeContextType {
   removeOutfit: (outfit: Outfit) => Promise<void>;
   toggleFavoriteOutfit: (outfit: Outfit) => Promise<void>;
 
-  // Wishlist Actions
+  // Wishlist Actions (no prices)
   addWishlist: (item: Omit<WishlistItem, 'id' | 'userId' | 'createdAt'>) => Promise<WishlistItem>;
   editWishlist: (id: string, updates: Partial<WishlistItem>) => Promise<void>;
   removeWishlist: (item: WishlistItem) => Promise<void>;
-  togglePurchasedWishlist: (item: WishlistItem) => Promise<void>;
+  markWishlistGotItAndMove: (item: WishlistItem) => Promise<ClothingItem>;
 
   // Schedule Actions
   assignSchedule: (date: string, outfitId: string, notes?: string) => Promise<void>;
+  markScheduleWornToday: (schedule: OutfitSchedule, outfit?: Outfit) => Promise<void>;
   removeSchedule: (scheduleId: string) => Promise<void>;
 
   // Demo Utility
@@ -87,7 +100,20 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [outfits, setOutfits] = useState<Outfit[]>([]);
   const [wishlist, setWishlist] = useState<WishlistItem[]>([]);
   const [schedules, setSchedules] = useState<OutfitSchedule[]>([]);
+  const [wearLogs, setWearLogs] = useState<WearLog[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+
+  useEffect(() => {
+    const goOnline = () => setIsOnline(true);
+    const goOffline = () => setIsOnline(false);
+    window.addEventListener('online', goOnline);
+    window.addEventListener('offline', goOffline);
+    return () => {
+      window.removeEventListener('online', goOnline);
+      window.removeEventListener('offline', goOffline);
+    };
+  }, []);
 
   const persistDemo = (next: DemoStorageState) => {
     try {
@@ -103,6 +129,7 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       setOutfits([]);
       setWishlist([]);
       setSchedules([]);
+      setWearLogs([]);
       setLoading(false);
       return;
     }
@@ -117,10 +144,11 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           setOutfits(parsed.outfits || DEMO_OUTFITS);
           setWishlist(parsed.wishlist || DEMO_WISHLIST);
           setSchedules(parsed.schedules || getInitialDemoSchedules());
+          setWearLogs(parsed.wearLogs || getInitialDemoWearLogs());
           setLoading(false);
           return;
         } catch {
-          // fall through to defaults
+          // fall through
         }
       }
       const initial: DemoStorageState = {
@@ -128,22 +156,23 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         outfits: DEMO_OUTFITS,
         wishlist: DEMO_WISHLIST,
         schedules: getInitialDemoSchedules(),
+        wearLogs: getInitialDemoWearLogs(),
       };
       setWardrobe(initial.wardrobe);
       setOutfits(initial.outfits);
       setWishlist(initial.wishlist);
       setSchedules(initial.schedules);
+      setWearLogs(initial.wearLogs);
       persistDemo(initial);
       setLoading(false);
       return;
     }
 
-    // Real Firebase Firestore Subscriptions
     setLoading(true);
     let loadedCount = 0;
     const checkDone = () => {
       loadedCount += 1;
-      if (loadedCount >= 4) setLoading(false);
+      if (loadedCount >= 5) setLoading(false);
     };
 
     const unsubW = subscribeWardrobe(
@@ -178,12 +207,21 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       },
       () => checkDone()
     );
+    const unsubLogs = subscribeWearLogs(
+      userProfile.uid,
+      (logs) => {
+        setWearLogs(logs);
+        checkDone();
+      },
+      () => checkDone()
+    );
 
     return () => {
       unsubW();
       unsubO();
       unsubWish();
       unsubS();
+      unsubLogs();
     };
   }, [userProfile?.uid, isDemoMode]);
 
@@ -194,11 +232,13 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       outfits: DEMO_OUTFITS,
       wishlist: DEMO_WISHLIST,
       schedules: getInitialDemoSchedules(),
+      wearLogs: getInitialDemoWearLogs(),
     };
     setWardrobe(initial.wardrobe);
     setOutfits(initial.outfits);
     setWishlist(initial.wishlist);
     setSchedules(initial.schedules);
+    setWearLogs(initial.wearLogs);
     persistDemo(initial);
   };
 
@@ -210,13 +250,15 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       id: createId('item'),
       userId: userProfile.uid,
       wearCount: input.wearCount ?? 0,
+      laundryStatus: input.laundryStatus ?? 'clean',
+      visibility: input.visibility ?? userProfile.defaultItemVisibility ?? 'public',
       createdAt: new Date().toISOString(),
     };
 
     if (isDemoMode) {
       const nextW = [newItem, ...wardrobe];
       setWardrobe(nextW);
-      persistDemo({ wardrobe: nextW, outfits, wishlist, schedules });
+      persistDemo({ wardrobe: nextW, outfits, wishlist, schedules, wearLogs });
     } else {
       await saveClothingItem(newItem);
     }
@@ -229,30 +271,85 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         item.id === id ? { ...item, ...updates, updatedAt: new Date().toISOString() } : item
       );
       setWardrobe(nextW);
-      persistDemo({ wardrobe: nextW, outfits, wishlist, schedules });
+      persistDemo({ wardrobe: nextW, outfits, wishlist, schedules, wearLogs });
     } else {
       await updateClothingItem(id, updates);
     }
   };
 
   const removeClothing = async (item: ClothingItem) => {
-    await deleteImageAsset(item.storagePath);
+    await deleteImageAsset(item.mediaId);
     if (isDemoMode) {
       const nextW = wardrobe.filter((w) => w.id !== item.id);
       setWardrobe(nextW);
-      persistDemo({ wardrobe: nextW, outfits, wishlist, schedules });
+      persistDemo({ wardrobe: nextW, outfits, wishlist, schedules, wearLogs });
     } else {
       await deleteClothingItem(item.id);
     }
   };
 
-  const logWear = async (id: string) => {
-    const existing = wardrobe.find((w) => w.id === id);
-    if (!existing) return;
-    await editClothing(id, {
-      wearCount: (existing.wearCount || 0) + 1,
-      lastWornAt: new Date().toISOString().split('T')[0],
-    });
+  const setLaundryStatus = async (id: string, status: LaundryStatus) => {
+    await editClothing(id, { laundryStatus: status });
+  };
+
+  const markManyClean = async (ids: string[]) => {
+    if (ids.length === 0) return;
+    const setIds = new Set(ids);
+    if (isDemoMode) {
+      const nextW = wardrobe.map((item) =>
+        setIds.has(item.id)
+          ? { ...item, laundryStatus: 'clean' as LaundryStatus, updatedAt: new Date().toISOString() }
+          : item
+      );
+      setWardrobe(nextW);
+      persistDemo({ wardrobe: nextW, outfits, wishlist, schedules, wearLogs });
+    } else {
+      await batchMarkWardrobeClean(ids);
+    }
+  };
+
+  const logWearForItems = async (itemIds: string[], outfitId?: string, date = getTodayISO()) => {
+    if (!userProfile || itemIds.length === 0) return;
+    const uniqueIds = Array.from(new Set(itemIds));
+    const autoDirty = Boolean(userProfile.autoDirtyOnWear);
+    const log: WearLog = {
+      id: createId('wear'),
+      userId: userProfile.uid,
+      date,
+      itemIds: uniqueIds,
+      outfitId,
+      createdAt: new Date().toISOString(),
+    };
+
+    if (isDemoMode) {
+      const setIds = new Set(uniqueIds);
+      const nextW = wardrobe.map((w) =>
+        setIds.has(w.id)
+          ? {
+              ...w,
+              wearCount: (w.wearCount || 0) + 1,
+              lastWornAt: date,
+              laundryStatus: autoDirty ? ('dirty' as LaundryStatus) : w.laundryStatus,
+            }
+          : w
+      );
+      const nextLogs = [log, ...wearLogs];
+      setWardrobe(nextW);
+      setWearLogs(nextLogs);
+      persistDemo({ wardrobe: nextW, outfits, wishlist, schedules, wearLogs: nextLogs });
+    } else {
+      await saveWearLog(log);
+      for (const id of uniqueIds) {
+        const item = wardrobe.find((w) => w.id === id);
+        if (item) {
+          await updateClothingItem(id, {
+            wearCount: (item.wearCount || 0) + 1,
+            lastWornAt: date,
+            ...(autoDirty ? { laundryStatus: 'dirty' } : {}),
+          });
+        }
+      }
+    }
   };
 
   // Outfit / Lookbook CRUD
@@ -262,12 +359,14 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       ...input,
       id: createId('outfit'),
       userId: userProfile.uid,
+      visibility: input.visibility ?? userProfile.defaultOutfitVisibility ?? 'public',
+      allowRemix: input.allowRemix !== false,
       createdAt: new Date().toISOString(),
     };
     if (isDemoMode) {
       const nextO = [newOutfit, ...outfits];
       setOutfits(nextO);
-      persistDemo({ wardrobe, outfits: nextO, wishlist, schedules });
+      persistDemo({ wardrobe, outfits: nextO, wishlist, schedules, wearLogs });
     } else {
       await saveOutfit(newOutfit);
     }
@@ -280,20 +379,20 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         o.id === id ? { ...o, ...updates, updatedAt: new Date().toISOString() } : o
       );
       setOutfits(nextO);
-      persistDemo({ wardrobe, outfits: nextO, wishlist, schedules });
+      persistDemo({ wardrobe, outfits: nextO, wishlist, schedules, wearLogs });
     } else {
       await updateOutfit(id, updates);
     }
   };
 
   const removeOutfit = async (outfit: Outfit) => {
-    await deleteImageAsset(outfit.storagePath);
+    await deleteImageAsset(outfit.mediaId);
     if (isDemoMode) {
       const nextO = outfits.filter((o) => o.id !== outfit.id);
       const nextS = schedules.filter((s) => s.outfitId !== outfit.id);
       setOutfits(nextO);
       setSchedules(nextS);
-      persistDemo({ wardrobe, outfits: nextO, wishlist, schedules: nextS });
+      persistDemo({ wardrobe, outfits: nextO, wishlist, schedules: nextS, wearLogs });
     } else {
       await deleteOutfit(outfit.id);
     }
@@ -310,12 +409,14 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       ...input,
       id: createId('wish'),
       userId: userProfile.uid,
+      visibility: input.visibility ?? 'private',
+      status: input.status ?? 'wanted',
       createdAt: new Date().toISOString(),
     };
     if (isDemoMode) {
       const nextWish = [newItem, ...wishlist];
       setWishlist(nextWish);
-      persistDemo({ wardrobe, outfits, wishlist: nextWish, schedules });
+      persistDemo({ wardrobe, outfits, wishlist: nextWish, schedules, wearLogs });
     } else {
       await saveWishlistItem(newItem);
     }
@@ -328,25 +429,42 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         w.id === id ? { ...w, ...updates, updatedAt: new Date().toISOString() } : w
       );
       setWishlist(nextWish);
-      persistDemo({ wardrobe, outfits, wishlist: nextWish, schedules });
+      persistDemo({ wardrobe, outfits, wishlist: nextWish, schedules, wearLogs });
     } else {
       await updateWishlistItem(id, updates);
     }
   };
 
   const removeWishlist = async (item: WishlistItem) => {
-    await deleteImageAsset(item.storagePath);
+    await deleteImageAsset(item.mediaId);
     if (isDemoMode) {
       const nextWish = wishlist.filter((w) => w.id !== item.id);
       setWishlist(nextWish);
-      persistDemo({ wardrobe, outfits, wishlist: nextWish, schedules });
+      persistDemo({ wardrobe, outfits, wishlist: nextWish, schedules, wearLogs });
     } else {
       await deleteWishlistItem(item.id);
     }
   };
 
-  const togglePurchasedWishlist = async (item: WishlistItem) => {
-    await editWishlist(item.id, { isPurchased: !item.isPurchased });
+  const markWishlistGotItAndMove = async (item: WishlistItem) => {
+    await editWishlist(item.id, { status: 'got_it' });
+    const created = await addClothing({
+      name: item.name,
+      category: (item.category as any) || 'Other',
+      brand: item.brand,
+      color: item.colorTags[0] || 'Neutral',
+      size: 'M',
+      seasons: ['All-Season'],
+      styleTags: item.styleTags || [],
+      description: item.notes,
+      altText: `${item.colorTags[0] || ''} ${item.brand} ${item.name}`.trim(),
+      visibility: userProfile?.defaultItemVisibility ?? 'public',
+      laundryStatus: 'clean',
+      imageUrl: item.imageUrl,
+      thumbUrl: item.thumbUrl,
+      wearCount: 0,
+    });
+    return created;
   };
 
   // Schedule CRUD
@@ -356,12 +474,14 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     if (existing) {
       if (isDemoMode) {
         const nextS = schedules.map((s) =>
-          s.id === existing.id ? { ...s, outfitId, notes, updatedAt: new Date().toISOString() } : s
+          s.id === existing.id
+            ? { ...s, outfitId, notes, wornConfirmed: false, updatedAt: new Date().toISOString() }
+            : s
         );
         setSchedules(nextS);
-        persistDemo({ wardrobe, outfits, wishlist, schedules: nextS });
+        persistDemo({ wardrobe, outfits, wishlist, schedules: nextS, wearLogs });
       } else {
-        await updateSchedule(existing.id, { outfitId, notes });
+        await updateSchedule(existing.id, { outfitId, notes, wornConfirmed: false });
       }
       return;
     }
@@ -372,15 +492,38 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       date,
       outfitId,
       notes,
+      wornConfirmed: false,
       createdAt: new Date().toISOString(),
     };
 
     if (isDemoMode) {
       const nextS = [newSched, ...schedules];
       setSchedules(nextS);
-      persistDemo({ wardrobe, outfits, wishlist, schedules: nextS });
+      persistDemo({ wardrobe, outfits, wishlist, schedules: nextS, wearLogs });
     } else {
       await saveSchedule(newSched);
+    }
+  };
+
+  const markScheduleWornToday = async (schedule: OutfitSchedule, outfit?: Outfit) => {
+    const ids: string[] = [];
+    if (outfit) {
+      if (outfit.topId) ids.push(outfit.topId);
+      if (outfit.bottomId) ids.push(outfit.bottomId);
+      if (outfit.shoesId) ids.push(outfit.shoesId);
+      if (outfit.accessoryIds) ids.push(...outfit.accessoryIds);
+    }
+    if (ids.length > 0) {
+      await logWearForItems(ids, outfit?.id, schedule.date);
+    }
+    if (isDemoMode) {
+      const nextS = schedules.map((s) =>
+        s.id === schedule.id ? { ...s, wornConfirmed: true, wornAt: new Date().toISOString() } : s
+      );
+      setSchedules(nextS);
+      persistDemo({ wardrobe, outfits, wishlist, schedules: nextS, wearLogs });
+    } else {
+      await updateSchedule(schedule.id, { wornConfirmed: true, wornAt: new Date().toISOString() });
     }
   };
 
@@ -388,7 +531,7 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     if (isDemoMode) {
       const nextS = schedules.filter((s) => s.id !== scheduleId);
       setSchedules(nextS);
-      persistDemo({ wardrobe, outfits, wishlist, schedules: nextS });
+      persistDemo({ wardrobe, outfits, wishlist, schedules: nextS, wearLogs });
     } else {
       await deleteSchedule(scheduleId);
     }
@@ -401,11 +544,15 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         outfits,
         wishlist,
         schedules,
+        wearLogs,
         loading,
+        isOnline,
         addClothing,
         editClothing,
         removeClothing,
-        logWear,
+        setLaundryStatus,
+        markManyClean,
+        logWearForItems,
         addOutfit,
         editOutfit,
         removeOutfit,
@@ -413,8 +560,9 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         addWishlist,
         editWishlist,
         removeWishlist,
-        togglePurchasedWishlist,
+        markWishlistGotItAndMove,
         assignSchedule,
+        markScheduleWornToday,
         removeSchedule,
         resetDemoData,
       }}

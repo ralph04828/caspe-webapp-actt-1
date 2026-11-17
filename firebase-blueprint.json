@@ -1,160 +1,170 @@
 {
   "entities": {
-    "User": {
-      "title": "User",
-      "description": "User profile and theme preferences for SWOOOSH",
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Public/private social profile and wardrobe preferences for a SWOOOSH member.",
       "type": "object",
       "properties": {
-        "uid": {
-          "type": "string",
-          "description": "Firebase Auth UID",
-          "maxLength": 128
-        },
-        "email": {
-          "type": "string",
-          "description": "Registered email address",
-          "maxLength": 256
-        },
-        "displayName": {
-          "type": "string",
-          "description": "User full name",
-          "maxLength": 120
-        },
-        "photoURL": {
-          "type": "string",
-          "description": "Profile photo URL",
-          "maxLength": 100000
-        },
-        "theme": {
-          "type": "string",
-          "enum": ["dark", "light"],
-          "description": "Preferred Concrete theme"
-        },
-        "stylePreference": {
-          "type": "string",
-          "description": "Preferred fashion aesthetic",
-          "maxLength": 80
-        },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time",
-          "maxLength": 64
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time",
-          "maxLength": 64
-        }
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "username": { "type": "string" },
+        "usernameLower": { "type": "string" },
+        "bio": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "theme": { "type": "string", "enum": ["dark", "light"] },
+        "isPublic": { "type": "boolean" },
+        "defaultItemVisibility": { "type": "string", "enum": ["public", "followers", "private"] },
+        "defaultOutfitVisibility": { "type": "string", "enum": ["public", "followers", "private"] },
+        "autoDirtyOnWear": { "type": "boolean" },
+        "isAdultConfirmed": { "type": "boolean" },
+        "followersCount": { "type": "integer" },
+        "followingCount": { "type": "integer" },
+        "postsCount": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["uid", "email", "createdAt"]
+      "required": ["uid", "email", "displayName", "username", "usernameLower", "isPublic", "createdAt"]
+    },
+    "MediaAsset": {
+      "title": "MediaAsset",
+      "description": "Compressed WebP image stored directly in Firestore with owner & visibility rules.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "visibility": { "type": "string", "enum": ["public", "followers", "private"] },
+        "fullDataUrl": { "type": "string" },
+        "thumbDataUrl": { "type": "string" },
+        "byteSize": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ownerId", "visibility", "fullDataUrl", "thumbDataUrl", "byteSize", "createdAt"]
     },
     "ClothingItem": {
-      "title": "Clothing Item",
-      "description": "Personal wardrobe garment entry",
+      "title": "ClothingItem",
+      "description": "Digital wardrobe piece with visibility, seasons, style tags, altText, and private laundry/wear status (no prices).",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "maxLength": 128 },
-        "userId": { "type": "string", "maxLength": 128 },
-        "name": { "type": "string", "maxLength": 160 },
-        "category": {
-          "type": "string",
-          "enum": ["T-shirts", "Shirts", "Hoodies", "Jackets", "Pants", "Shorts", "Jorts", "Shoes", "Sneakers", "Slides", "Accessories", "Other"]
-        },
-        "brand": { "type": "string", "maxLength": 100 },
-        "color": { "type": "string", "maxLength": 60 },
-        "size": { "type": "string", "maxLength": 32 },
-        "price": { "type": "number" },
-        "purchaseDate": { "type": "string", "maxLength": 64 },
-        "description": { "type": "string", "maxLength": 1000 },
-        "imageUrl": { "type": "string", "maxLength": 500000 },
-        "storagePath": { "type": "string", "maxLength": 500 },
-        "wearCount": { "type": "number" },
-        "lastWornAt": { "type": "string", "maxLength": 64 },
-        "createdAt": { "type": "string", "format": "date-time", "maxLength": 64 },
-        "updatedAt": { "type": "string", "format": "date-time", "maxLength": 64 }
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "brand": { "type": "string" },
+        "color": { "type": "string" },
+        "size": { "type": "string" },
+        "visibility": { "type": "string", "enum": ["public", "followers", "private"] },
+        "laundryStatus": { "type": "string", "enum": ["clean", "dirty", "washing"] },
+        "wearCount": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["id", "userId", "name", "category", "brand", "color", "size", "price", "wearCount", "createdAt"]
+      "required": ["id", "userId", "name", "category", "visibility", "laundryStatus", "wearCount", "createdAt"]
     },
     "Outfit": {
       "title": "Outfit",
-      "description": "Saved outfit combination in Fit Builder / My Lookbook",
+      "description": "Saved outfit combination in My Lookbook with visibility and remix permissions.",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "maxLength": 128 },
-        "userId": { "type": "string", "maxLength": 128 },
-        "name": { "type": "string", "maxLength": 160 },
-        "styleCategory": { "type": "string", "maxLength": 80 },
-        "description": { "type": "string", "maxLength": 1000 },
-        "topId": { "type": "string", "maxLength": 128 },
-        "bottomId": { "type": "string", "maxLength": 128 },
-        "shoesId": { "type": "string", "maxLength": 128 },
-        "accessoryIds": { "type": "array" },
-        "coverImageUrl": { "type": "string", "maxLength": 500000 },
-        "storagePath": { "type": "string", "maxLength": 500 },
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "styleCategory": { "type": "string" },
+        "visibility": { "type": "string", "enum": ["public", "followers", "private"] },
+        "allowRemix": { "type": "boolean" },
         "isFavorite": { "type": "boolean" },
-        "source": { "type": "string", "enum": ["builder", "ai"] },
-        "createdAt": { "type": "string", "format": "date-time", "maxLength": 64 },
-        "updatedAt": { "type": "string", "format": "date-time", "maxLength": 64 }
+        "createdAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["id", "userId", "name", "styleCategory", "isFavorite", "createdAt"]
+      "required": ["id", "userId", "name", "styleCategory", "visibility", "allowRemix", "createdAt"]
+    },
+    "SocialPost": {
+      "title": "SocialPost",
+      "description": "Fashion social feed post (outfit, piece, or ootd) with comment policy and remix metadata.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "postType": { "type": "string", "enum": ["outfit", "piece", "ootd"] },
+        "caption": { "type": "string" },
+        "visibility": { "type": "string", "enum": ["public", "followers", "private"] },
+        "commentPolicy": { "type": "string", "enum": ["everyone", "followers", "off"] },
+        "likesCount": { "type": "integer" },
+        "commentsCount": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "postType", "caption", "visibility", "createdAt"]
     },
     "WishlistItem": {
-      "title": "Wishlist Item",
-      "description": "Personal clothing wishlist item",
+      "title": "WishlistItem",
+      "description": "Fashion piece wishlist item (private by default, strictly no prices or store URLs).",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "maxLength": 128 },
-        "userId": { "type": "string", "maxLength": 128 },
-        "name": { "type": "string", "maxLength": 160 },
-        "brand": { "type": "string", "maxLength": 100 },
-        "category": { "type": "string", "maxLength": 60 },
-        "price": { "type": "number" },
-        "productUrl": { "type": "string", "maxLength": 1000 },
-        "notes": { "type": "string", "maxLength": 1000 },
-        "imageUrl": { "type": "string", "maxLength": 500000 },
-        "storagePath": { "type": "string", "maxLength": 500 },
-        "isPurchased": { "type": "boolean" },
-        "createdAt": { "type": "string", "format": "date-time", "maxLength": 64 },
-        "updatedAt": { "type": "string", "format": "date-time", "maxLength": 64 }
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "priority": { "type": "string", "enum": ["low", "medium", "high"] },
+        "status": { "type": "string", "enum": ["wanted", "got_it"] },
+        "visibility": { "type": "string", "enum": ["public", "followers", "private"] },
+        "createdAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["id", "userId", "name", "brand", "category", "price", "isPurchased", "createdAt"]
+      "required": ["id", "userId", "name", "priority", "status", "visibility", "createdAt"]
     },
     "OutfitSchedule": {
-      "title": "Outfit Schedule",
-      "description": "Calendar-based outfit planner assignment",
+      "title": "OutfitSchedule",
+      "description": "Private daily outfit calendar entry.",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "maxLength": 128 },
-        "userId": { "type": "string", "maxLength": 128 },
-        "date": { "type": "string", "maxLength": 20 },
-        "outfitId": { "type": "string", "maxLength": 128 },
-        "notes": { "type": "string", "maxLength": 1000 },
-        "createdAt": { "type": "string", "format": "date-time", "maxLength": 64 },
-        "updatedAt": { "type": "string", "format": "date-time", "maxLength": 64 }
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "date": { "type": "string" },
+        "outfitId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "userId", "date", "outfitId", "createdAt"]
+    },
+    "WearLog": {
+      "title": "WearLog",
+      "description": "Private wear log recording pieces worn on a given date.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "date": { "type": "string" },
+        "itemIds": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "date", "itemIds", "createdAt"]
+    },
+    "ShareLink": {
+      "title": "ShareLink",
+      "description": "Public or unlisted shareable lookbook/outfit snapshot link.",
+      "type": "object",
+      "properties": {
+        "token": { "type": "string" },
+        "userId": { "type": "string" },
+        "visibility": { "type": "string", "enum": ["public", "unlisted", "revoked"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["token", "userId", "visibility", "createdAt"]
     }
   },
   "firestore": {
-    "/users/{userId}": {
-      "schema": "User",
-      "description": "User profile and theme settings"
-    },
-    "/wardrobe/{itemId}": {
-      "schema": "ClothingItem",
-      "description": "User clothing items"
-    },
-    "/outfits/{outfitId}": {
-      "schema": "Outfit",
-      "description": "User saved outfits and lookbook entries"
-    },
-    "/wishlist/{wishId}": {
-      "schema": "WishlistItem",
-      "description": "User fashion wishlist"
-    },
-    "/schedules/{scheduleId}": {
-      "schema": "OutfitSchedule",
-      "description": "User calendar outfit planner assignments"
-    }
+    "/users/{userId}": { "schema": "UserProfile", "description": "Member profiles" },
+    "/usernames/{usernameLower}": { "schema": "object", "description": "Unique lowercase username registry" },
+    "/media/{mediaId}": { "schema": "MediaAsset", "description": "Compressed WebP image assets" },
+    "/wardrobe/{itemId}": { "schema": "ClothingItem", "description": "Digital wardrobe garments" },
+    "/outfits/{outfitId}": { "schema": "Outfit", "description": "Saved outfits in lookbook" },
+    "/posts/{postId}": { "schema": "SocialPost", "description": "Social fashion feed posts" },
+    "/postLikes/{likeId}": { "schema": "object", "description": "Post likes" },
+    "/postSaves/{saveId}": { "schema": "object", "description": "Saved/bookmarked posts" },
+    "/comments/{commentId}": { "schema": "object", "description": "Post comments" },
+    "/follows/{followId}": { "schema": "object", "description": "Follow and pending follow request edges" },
+    "/notifications/{notifId}": { "schema": "object", "description": "User activity notifications" },
+    "/userBlocks/{blockId}": { "schema": "object", "description": "Blocked user edges" },
+    "/userMutes/{muteId}": { "schema": "object", "description": "Muted user edges" },
+    "/reports/{reportId}": { "schema": "object", "description": "User safety reports" },
+    "/wishlist/{wishId}": { "schema": "WishlistItem", "description": "Style wishlist (no prices)" },
+    "/schedules/{scheduleId}": { "schema": "OutfitSchedule", "description": "Private outfit calendar" },
+    "/wearLogs/{logId}": { "schema": "WearLog", "description": "Private wear history logs" },
+    "/shareLinks/{token}": { "schema": "ShareLink", "description": "Shareable lookbook/outfit links" },
+    "/aiQuotas/{quotaId}": { "schema": "object", "description": "Daily AI usage quota tracking" }
   }
 }
