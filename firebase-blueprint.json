@@ -12,6 +12,7 @@
         "usernameLower": { "type": "string" },
         "bio": { "type": "string" },
         "photoURL": { "type": "string" },
+        "mediaId": { "type": "string" },
         "theme": { "type": "string", "enum": ["dark", "light"] },
         "isPublic": { "type": "boolean" },
         "defaultItemVisibility": { "type": "string", "enum": ["public", "followers", "private"] },
@@ -27,18 +28,36 @@
     },
     "MediaAsset": {
       "title": "MediaAsset",
-      "description": "Compressed WebP image stored directly in Firestore with owner & visibility rules.",
+      "description": "Compressed WebP image stored directly in Firestore (<1 MiB) with owner, visibility, dimensions, contentType, and optional subcollection chunking.",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
         "ownerId": { "type": "string" },
         "visibility": { "type": "string", "enum": ["public", "followers", "private"] },
+        "contentType": { "type": "string", "enum": ["image/webp", "image/jpeg", "image/png"] },
+        "width": { "type": "integer" },
+        "height": { "type": "integer" },
+        "thumbWidth": { "type": "integer" },
+        "thumbHeight": { "type": "integer" },
         "fullDataUrl": { "type": "string" },
         "thumbDataUrl": { "type": "string" },
         "byteSize": { "type": "integer" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "chunkCount": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["id", "ownerId", "visibility", "fullDataUrl", "thumbDataUrl", "byteSize", "createdAt"]
+      "required": ["id", "ownerId", "visibility", "contentType", "width", "height", "thumbWidth", "thumbHeight", "fullDataUrl", "thumbDataUrl", "byteSize", "createdAt"]
+    },
+    "MediaChunk": {
+      "title": "MediaChunk",
+      "description": "Subcollection chunk storing a slice of Base64 image data when exceeding single-doc safe threshold.",
+      "type": "object",
+      "properties": {
+        "index": { "type": "integer" },
+        "data": { "type": "string" },
+        "byteSize": { "type": "integer" }
+      },
+      "required": ["index", "data", "byteSize"]
     },
     "ClothingItem": {
       "title": "ClothingItem",
@@ -91,6 +110,27 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "userId", "postType", "caption", "visibility", "createdAt"]
+    },
+    "PostComment": {
+      "title": "PostComment",
+      "description": "Comment on a social post with optional compressed image attachment reference.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "postId": { "type": "string" },
+        "postAuthorId": { "type": "string" },
+        "userId": { "type": "string" },
+        "authorUsername": { "type": "string" },
+        "authorName": { "type": "string" },
+        "authorPhotoUrl": { "type": "string" },
+        "text": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "thumbUrl": { "type": "string" },
+        "mediaId": { "type": "string" },
+        "altText": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "postId", "postAuthorId", "userId", "text", "createdAt"]
     },
     "WishlistItem": {
       "title": "WishlistItem",
@@ -150,12 +190,13 @@
     "/users/{userId}": { "schema": "UserProfile", "description": "Member profiles" },
     "/usernames/{usernameLower}": { "schema": "object", "description": "Unique lowercase username registry" },
     "/media/{mediaId}": { "schema": "MediaAsset", "description": "Compressed WebP image assets" },
+    "/media/{mediaId}/chunks/{chunkId}": { "schema": "MediaChunk", "description": "Chunked image slices (<500KB per doc)" },
     "/wardrobe/{itemId}": { "schema": "ClothingItem", "description": "Digital wardrobe garments" },
     "/outfits/{outfitId}": { "schema": "Outfit", "description": "Saved outfits in lookbook" },
     "/posts/{postId}": { "schema": "SocialPost", "description": "Social fashion feed posts" },
     "/postLikes/{likeId}": { "schema": "object", "description": "Post likes" },
     "/postSaves/{saveId}": { "schema": "object", "description": "Saved/bookmarked posts" },
-    "/comments/{commentId}": { "schema": "object", "description": "Post comments" },
+    "/comments/{commentId}": { "schema": "PostComment", "description": "Post comments with optional media attachments" },
     "/follows/{followId}": { "schema": "object", "description": "Follow and pending follow request edges" },
     "/notifications/{notifId}": { "schema": "object", "description": "User activity notifications" },
     "/userBlocks/{blockId}": { "schema": "object", "description": "Blocked user edges" },

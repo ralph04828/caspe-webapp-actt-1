@@ -350,6 +350,7 @@ export const FitBuilderPage: React.FC<FitBuilderPageProps> = ({
                 <div className="aspect-square">
                   <GarmentImage
                     src={slot.item?.thumbUrl || slot.item?.imageUrl}
+                    mediaId={slot.item?.mediaId}
                     alt={slot.item?.altText || slot.label}
                     fallbackLabel={slot.item ? slot.item.name : `No ${slot.label}`}
                     isCutout={slot.item?.isCutout}
@@ -525,6 +526,7 @@ export const FitBuilderPage: React.FC<FitBuilderPageProps> = ({
                         <div className="relative aspect-square rounded-chip overflow-hidden mb-2 bg-[#eae7e0] dark:bg-[#171717]">
                           <GarmentImage
                             src={item.thumbUrl || item.imageUrl}
+                            mediaId={item.mediaId}
                             alt={item.altText || item.name}
                             isCutout={item.isCutout}
                           />

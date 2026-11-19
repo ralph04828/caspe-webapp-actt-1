@@ -13,6 +13,7 @@ import { useWardrobe } from '../context/WardrobeContext';
 import { useSocial } from '../context/SocialContext';
 import { getUserProfile } from '../services/firestoreService';
 import { daysSince } from '../utils/formatters';
+import { AvatarImage } from './AvatarImage';
 import { GarmentImage } from './GarmentImage';
 import { PostCard } from './PostCard';
 import {
@@ -148,7 +149,6 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
 
   const followStatus = isOwn ? 'none' : isFollowing(targetProfile.uid);
   const canSeePrivateContent = isOwn || targetProfile.isPublic || followStatus === 'accepted';
-  const initial = (targetProfile.displayName || targetProfile.username || 'S').charAt(0).toUpperCase();
 
   return (
     <div className="space-y-6">
@@ -166,18 +166,13 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
       {/* Profile Header Card */}
       <section className="p-6 rounded-modal border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div className="flex items-start sm:items-center gap-4">
-          {targetProfile.photoURL ? (
-            <img
-              src={targetProfile.photoURL}
-              alt={targetProfile.displayName}
-              referrerPolicy="no-referrer"
-              className="w-20 h-20 rounded-full object-cover border border-[#d4cfc5] dark:border-[#404040] shrink-0"
-            />
-          ) : (
-            <div className="w-20 h-20 rounded-full bg-[#171717] dark:bg-[#e5e1da] text-[#f5f4f0] dark:text-[#171717] font-display font-bold text-2xl flex items-center justify-center shrink-0">
-              {initial}
-            </div>
-          )}
+          <AvatarImage
+            src={targetProfile.photoURL}
+            mediaId={targetProfile.mediaId}
+            name={targetProfile.displayName || targetProfile.username}
+            sizeClass="w-20 h-20"
+            textSizeClass="text-2xl"
+          />
 
           <div className="space-y-1.5">
             <div className="flex flex-wrap items-center gap-2">
@@ -376,6 +371,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
                   <div className="aspect-square bg-[#eae7e0] dark:bg-[#171717]">
                     <GarmentImage
                       src={item.thumbUrl || item.imageUrl}
+                      mediaId={item.mediaId}
                       alt={item.altText || item.name}
                       isCutout={item.isCutout}
                     />

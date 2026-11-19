@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import {
   User,
   onAuthStateChanged,
@@ -29,6 +29,7 @@ import { DEMO_USER_ID, DEMO_USER_PROFILE } from '../data/demoData';
 import { ThemeMode, UserProfile } from '../types';
 import { useTheme } from './ThemeContext';
 import { normalizeUsername, validateUsername } from '../utils/formatters';
+import { clearMediaCache, deleteImageAsset } from '../services/storageService';
 
 interface AuthContextType {
   currentUser: User | null;
@@ -66,6 +67,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
   const [isDemoMode, setIsDemoMode] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const pendingSignupRef = useRef<{ displayName: string; usernameLower: string } | null>(null);
 
   const clearError = () => setError(null);
 
@@ -112,11 +114,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setCurrentUser(user);
 
         try {
+          if (pendingSignupRef.current) {
+            return;
+          }
           let profile = await getUserProfile(user.uid);
-          if (!profile) {
+          if (!profile && !pendingSignupRef.current) {
             profile = buildDefaultProfile(user);
             await reserveUsername(profile.usernameLower, user.uid).catch(() => {});
             await saveUserProfile(profile);
+          }
+          if (!profile) {
+            return;
           }
           const hydrated: UserProfile = {
             ...profile,
@@ -169,7 +177,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       case 'auth/popup-closed-by-user':
         return 'Sign-in popup was closed before completing. Please try again.';
       case 'auth/operation-not-allowed':
-        return 'This sign-in method is not enabled in Firebase Console yet. Use Google Sign-In or Explore Demo.';
+        return 'Email/Password sign-in is disabled in Firebase Console. Open Firebase Console → Authentication → Sign-in method and enable Email/Password (free on Spark plan), or use Google Sign-In / Explore Demo.';
+      case 'auth/unauthorized-domain':
+        return 'This domain is not authorized in Firebase Authentication settings yet. Add it under Authentication → Settings → Authorized domains in Firebase Console.';
+      case 'auth/network-request-failed':
+        return 'Network error while contacting authentication service. Please check your connection and try again.';
       case 'auth/requires-recent-login':
         return 'For security, please sign out and sign back in before completing this action.';
       default:
@@ -238,6 +250,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       throw new Error(msg);
     }
 
+    pendingSignupRef.current = {
+      displayName: params.fullName.trim() || usernameLower,
+      usernameLower,
+    };
+
     try {
       await setPersistence(auth, browserLocalPersistence);
       localStorage.removeItem(DEMO_SESSION_KEY);
@@ -274,6 +291,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const msg = mapAuthError(err);
       setError(msg);
       throw new Error(msg);
+    } finally {
+      pendingSignupRef.current = null;
     }
   };
 
@@ -297,6 +316,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signOutUser = async () => {
     setError(null);
+    clearMediaCache();
     localStorage.removeItem(DEMO_SESSION_KEY);
     setIsDemoMode(false);
     setUserProfile(null);
@@ -328,18 +348,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     if (isDemoMode) {
+      if (cleanUpdates.mediaId && userProfile.mediaId && cleanUpdates.mediaId !== userProfile.mediaId) {
+        deleteImageAsset(userProfile.mediaId).catch(() => {});
+      }
       setUserProfile((prev) => (prev ? { ...prev, ...cleanUpdates } : prev));
       if (cleanUpdates.theme) setTheme(cleanUpdates.theme);
       return;
     }
 
     if (auth.currentUser && (cleanUpdates.displayName !== undefined || cleanUpdates.photoURL !== undefined)) {
+      const nextHttpPhoto =
+        cleanUpdates.photoURL && /^https?:\/\//i.test(cleanUpdates.photoURL)
+          ? cleanUpdates.photoURL
+          : auth.currentUser.photoURL ?? undefined;
       await updateProfile(auth.currentUser, {
         displayName: cleanUpdates.displayName ?? auth.currentUser.displayName ?? undefined,
-        photoURL:
-          cleanUpdates.photoURL && !cleanUpdates.photoURL.startsWith('data:')
-            ? cleanUpdates.photoURL
-            : auth.currentUser.photoURL ?? undefined,
+        photoURL: nextHttpPhoto,
       }).catch(() => {});
     }
 
@@ -348,6 +372,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     delete firestorePayload.email;
 
     await updateUserProfileDoc(userProfile.uid, firestorePayload);
+    if (cleanUpdates.mediaId && userProfile.mediaId && cleanUpdates.mediaId !== userProfile.mediaId) {
+      deleteImageAsset(userProfile.mediaId).catch(() => {});
+    }
     setUserProfile((prev) => (prev ? { ...prev, ...cleanUpdates } : prev));
     if (cleanUpdates.theme) setTheme(cleanUpdates.theme);
   };
@@ -356,8 +383,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (isDemoMode) {
       throw new Error('Password cannot be changed in Demo Mode.');
     }
-    if (!auth.currentUser || !auth.currentUser.email) {
-      throw new Error('Password changes apply to email/password accounts.');
+    const hasPasswordProvider = auth.currentUser?.providerData?.some((p) => p.providerId === 'password');
+    if (!auth.currentUser || !auth.currentUser.email || !hasPasswordProvider) {
+      throw new Error('Password changes only apply to Email/Password accounts.');
     }
     try {
       const credential = EmailAuthProvider.credential(auth.currentUser.email, currentPassword);

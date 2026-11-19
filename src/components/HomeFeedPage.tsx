@@ -10,6 +10,7 @@ import {
 } from '../services/weatherService';
 import { getSuggestedSeasonsForTemp } from '../utils/formatters';
 import { PostCard } from './PostCard';
+import { AvatarImage } from './AvatarImage';
 import { GarmentImage } from './GarmentImage';
 import {
   CloudSun,
@@ -295,6 +296,7 @@ export const HomeFeedPage: React.FC<HomeFeedPageProps> = ({
                     <div className="aspect-square">
                       <GarmentImage
                         src={item!.thumbUrl || item!.imageUrl}
+                        mediaId={item!.mediaId}
                         alt={item!.altText || item!.name}
                         isCutout={item!.isCutout}
                       />
@@ -352,18 +354,13 @@ export const HomeFeedPage: React.FC<HomeFeedPageProps> = ({
                     onClick={() => onOpenProfile(creator.uid)}
                     className="flex items-center gap-2.5 min-w-0 text-left cursor-pointer"
                   >
-                    {creator.photoURL ? (
-                      <img
-                        src={creator.photoURL}
-                        alt={creator.displayName}
-                        referrerPolicy="no-referrer"
-                        className="w-9 h-9 rounded-full object-cover border border-[#d4cfc5] dark:border-[#404040] shrink-0"
-                      />
-                    ) : (
-                      <div className="w-9 h-9 rounded-full bg-[#171717] dark:bg-[#e5e1da] text-[#f5f4f0] dark:text-[#171717] font-bold text-xs flex items-center justify-center shrink-0">
-                        {creator.displayName.charAt(0)}
-                      </div>
-                    )}
+                    <AvatarImage
+                      src={creator.photoURL}
+                      mediaId={creator.mediaId}
+                      name={creator.displayName || creator.username}
+                      sizeClass="w-9 h-9"
+                      textSizeClass="text-xs"
+                    />
                     <div className="min-w-0">
                       <p className="text-xs font-semibold truncate">{creator.displayName}</p>
                       <p className="text-[11px] text-[#4e4c46] dark:text-[#c2bfb8] truncate">

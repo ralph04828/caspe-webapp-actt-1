@@ -815,6 +815,12 @@ export async function deleteAllUserData(uid: string, usernameLower?: string): Pr
   const mediaQ = query(collection(db, 'media'), where('ownerId', '==', uid));
   const mediaSnap = await getDocs(mediaQ);
   for (const d of mediaSnap.docs) {
+    const data = d.data() as { chunkCount?: number };
+    if (data.chunkCount && data.chunkCount > 0) {
+      for (let i = 0; i < data.chunkCount; i++) {
+        await deleteDoc(doc(db, 'media', d.id, 'chunks', String(i))).catch(() => {});
+      }
+    }
     await deleteDoc(d.ref);
   }
 

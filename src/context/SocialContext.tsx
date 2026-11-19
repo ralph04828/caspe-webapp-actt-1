@@ -57,6 +57,7 @@ import {
   updateShareLink,
 } from '../services/firestoreService';
 import { checkTextSafety, extractHashtags, extractMentions } from '../utils/formatters';
+import { deleteImageAsset } from '../services/storageService';
 
 const DEMO_SOCIAL_KEY = 'swooosh_demo_social_v2';
 
@@ -114,7 +115,16 @@ interface SocialContextType {
   toggleLike: (post: SocialPost) => Promise<void>;
   toggleSave: (post: SocialPost) => Promise<void>;
   loadComments: (postId: string) => Promise<PostComment[]>;
-  addComment: (post: SocialPost, text: string) => Promise<PostComment>;
+  addComment: (
+    post: SocialPost,
+    text: string,
+    attachment?: {
+      imageUrl: string;
+      thumbUrl: string;
+      mediaId: string;
+      altText?: string;
+    }
+  ) => Promise<PostComment>;
   deleteComment: (comment: PostComment) => Promise<void>;
 
   // Follow Actions
@@ -320,6 +330,8 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
         brand: isPrivate ? '' : item.brand,
         color: isPrivate ? '' : item.color,
         imageUrl: isPrivate ? undefined : item.thumbUrl || item.imageUrl,
+        thumbUrl: isPrivate ? undefined : item.thumbUrl,
+        mediaId: isPrivate ? undefined : item.mediaId,
         visibility: item.visibility,
         isPrivatePlaceholder: isPrivate,
       });
@@ -339,6 +351,7 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
     let piecesPreview: OutfitPieceSnapshot[] | undefined;
     let mediaUrl = params.mediaUrl;
     let thumbUrl = params.thumbUrl;
+    let mediaId = params.mediaId;
     let altText = params.altText;
 
     if (params.outfit) {
@@ -346,7 +359,8 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
       if (!mediaUrl) {
         const firstVisible = piecesPreview.find((p) => !p.isPrivatePlaceholder && p.imageUrl);
         mediaUrl = params.outfit.coverImageUrl || firstVisible?.imageUrl;
-        thumbUrl = mediaUrl;
+        thumbUrl = firstVisible?.thumbUrl || mediaUrl;
+        mediaId = params.outfit.mediaId || firstVisible?.mediaId;
       }
       if (!altText) {
         altText = `${params.outfit.name} — ${params.outfit.styleCategory} outfit`;
@@ -362,13 +376,16 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
           brand: isPriv ? '' : params.item.brand,
           color: isPriv ? '' : params.item.color,
           imageUrl: isPriv ? undefined : params.item.thumbUrl || params.item.imageUrl,
+          thumbUrl: isPriv ? undefined : params.item.thumbUrl,
+          mediaId: isPriv ? undefined : params.item.mediaId,
           visibility: params.item.visibility,
           isPrivatePlaceholder: isPriv,
         },
       ];
-      if (!mediaUrl) {
+      if (!mediaUrl && !isPriv) {
         mediaUrl = params.item.imageUrl;
         thumbUrl = params.item.thumbUrl || params.item.imageUrl;
+        mediaId = params.item.mediaId;
       }
       if (!altText) altText = params.item.altText;
     }
@@ -387,7 +404,7 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
       itemId: params.item?.id,
       mediaUrl,
       thumbUrl,
-      mediaId: params.mediaId,
+      mediaId,
       altText: altText || 'Fashion fit post',
       piecesPreview,
       styleTags: params.styleTags || (params.outfit ? [params.outfit.styleCategory] : ['Streetwear']),
@@ -430,6 +447,9 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const deletePost = async (post: SocialPost) => {
     if (!userProfile || post.userId !== userProfile.uid) return;
+    if (post.mediaId && !post.itemId && !post.outfitId) {
+      deleteImageAsset(post.mediaId).catch(() => {});
+    }
     if (isDemoMode) {
       const nextPosts = publicPosts.filter((p) => p.id !== post.id);
       setPublicPosts(nextPosts);
@@ -514,7 +534,16 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
     return list.filter((c) => !blockedSet.has(c.userId));
   };
 
-  const addComment = async (post: SocialPost, text: string): Promise<PostComment> => {
+  const addComment = async (
+    post: SocialPost,
+    text: string,
+    attachment?: {
+      imageUrl: string;
+      thumbUrl: string;
+      mediaId: string;
+      altText?: string;
+    }
+  ): Promise<PostComment> => {
     if (!userProfile) throw new Error('Sign in to comment.');
     if (post.commentPolicy === 'off' && post.userId !== userProfile.uid) {
       throw new Error('Comments are turned off for this post.');
@@ -522,7 +551,7 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
     if (post.commentPolicy === 'followers' && post.userId !== userProfile.uid && isFollowing(post.userId) !== 'accepted') {
       throw new Error('Only followers can comment on this post.');
     }
-    const trimmed = text.trim();
+    const trimmed = text.trim() || (attachment ? 'Shared a style photo' : '');
     if (!trimmed) throw new Error('Comment cannot be empty.');
     const safety = checkTextSafety(trimmed);
     if (!safety.ok) throw new Error(safety.reason || 'Comment blocked.');
@@ -536,6 +565,14 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
       authorName: userProfile.displayName,
       authorPhotoUrl: userProfile.photoURL,
       text: trimmed,
+      ...(attachment
+        ? {
+            imageUrl: attachment.imageUrl,
+            thumbUrl: attachment.thumbUrl,
+            mediaId: attachment.mediaId,
+            altText: attachment.altText || 'Comment image attachment',
+          }
+        : {}),
       mentions: extractMentions(trimmed),
       createdAt: new Date().toISOString(),
     };
@@ -573,6 +610,9 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
   const deleteComment = async (comment: PostComment) => {
     if (!userProfile) return;
     if (comment.userId !== userProfile.uid && comment.postAuthorId !== userProfile.uid) return;
+    if (comment.mediaId) {
+      deleteImageAsset(comment.mediaId).catch(() => {});
+    }
     if (isDemoMode) {
       const nextComments = demoComments.filter((c) => c.id !== comment.id);
       const nextPosts = publicPosts.map((p) =>

@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { STYLE_CATEGORIES, SocialPost } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useSocial } from '../context/SocialContext';
+import { AvatarImage } from './AvatarImage';
 import { GarmentImage } from './GarmentImage';
 import { PostCard } from './PostCard';
 import { Search, Heart, MessageCircle, Repeat, UserPlus, Check, Clock } from 'lucide-react';
@@ -126,18 +127,13 @@ export const ExplorePage: React.FC<ExplorePageProps> = ({
                     onClick={() => onOpenProfile(person.uid)}
                     className="flex items-center gap-3 min-w-0 text-left cursor-pointer"
                   >
-                    {person.photoURL ? (
-                      <img
-                        src={person.photoURL}
-                        alt={person.displayName}
-                        referrerPolicy="no-referrer"
-                        className="w-11 h-11 rounded-full object-cover border border-[#d4cfc5] dark:border-[#404040] shrink-0"
-                      />
-                    ) : (
-                      <div className="w-11 h-11 rounded-full bg-[#171717] dark:bg-[#e5e1da] text-[#f5f4f0] dark:text-[#171717] font-bold flex items-center justify-center shrink-0">
-                        {person.displayName.charAt(0)}
-                      </div>
-                    )}
+                    <AvatarImage
+                      src={person.photoURL}
+                      mediaId={person.mediaId}
+                      name={person.displayName || person.username}
+                      sizeClass="w-11 h-11"
+                      textSizeClass="text-sm"
+                    />
                     <div className="min-w-0">
                       <p className="text-sm font-semibold truncate">{person.displayName}</p>
                       <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8] truncate">
@@ -212,6 +208,7 @@ export const ExplorePage: React.FC<ExplorePageProps> = ({
               >
                 <GarmentImage
                   src={post.thumbUrl || post.mediaUrl}
+                  mediaId={post.mediaId}
                   alt={post.altText || post.caption}
                   fallbackLabel={post.caption}
                   className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"

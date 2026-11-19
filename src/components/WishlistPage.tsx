@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { CLOTHING_CATEGORIES, STYLE_CATEGORIES, Visibility, WishlistItem } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useWardrobe } from '../context/WardrobeContext';
-import { uploadImageAsset } from '../services/storageService';
+import { preparePreviewDataUrl, uploadImageAsset } from '../services/storageService';
 import { GarmentImage } from './GarmentImage';
 import { VisibilityBadge } from './VisibilityBadge';
 import { Plus, CheckCircle2, Trash2, ArrowRightCircle, Upload, X } from 'lucide-react';
@@ -31,12 +31,15 @@ export const WishlistPage: React.FC<WishlistPageProps> = ({ onToast }) => {
 
   const filtered = wishlist.filter((w) => (filterStatus === 'all' ? true : w.status === filterStatus));
 
-  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setPhotoDataUrl(String(reader.result || ''));
-    reader.readAsDataURL(file);
+    try {
+      const compressedDataUrl = await preparePreviewDataUrl(file);
+      setPhotoDataUrl(compressedDataUrl);
+    } catch (err: any) {
+      onToast(err?.message || 'Could not process image file.', 'error');
+    }
   };
 
   const handleAdd = async (e: React.FormEvent) => {
@@ -153,6 +156,7 @@ export const WishlistPage: React.FC<WishlistPageProps> = ({ onToast }) => {
                 <div className="relative h-48 bg-[#eae7e0] dark:bg-[#171717]">
                   <GarmentImage
                     src={item.thumbUrl || item.imageUrl}
+                    mediaId={item.mediaId}
                     alt={item.name}
                     fallbackLabel={item.name}
                   />

@@ -87,7 +87,8 @@ export const SharedLookbookView: React.FC<SharedLookbookViewProps> = ({
                         className="aspect-square rounded-control overflow-hidden bg-white dark:bg-[#242424]"
                       >
                         <GarmentImage
-                          src={p.imageUrl}
+                          src={p.thumbUrl || p.imageUrl}
+                          mediaId={p.mediaId}
                           alt={p.name}
                           isPrivatePlaceholder={p.isPrivatePlaceholder}
                         />

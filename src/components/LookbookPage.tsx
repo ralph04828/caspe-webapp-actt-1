@@ -157,6 +157,7 @@ export const LookbookPage: React.FC<LookbookPageProps> = ({
                       >
                         <GarmentImage
                           src={p?.thumbUrl || p?.imageUrl}
+                          mediaId={p?.mediaId}
                           alt={p?.altText || 'Outfit piece'}
                           fallbackLabel={p?.name || 'Empty'}
                           isCutout={p?.isCutout}

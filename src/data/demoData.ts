@@ -11,13 +11,20 @@ import {
   WishlistItem,
 } from '../types';
 
-export const HERO_EDITORIAL_IMG = '/src/assets/images/hero_concrete_editorial_1794905625502.jpg';
+import heroEditorialImg from '../assets/images/hero_concrete_editorial_1794905625502.jpg';
+import imgBoxyTee from '../assets/images/wardrobe_boxy_tee_1794905625912.jpg';
+import imgHoodie from '../assets/images/wardrobe_heavy_hoodie_1794905626786.jpg';
+import imgCargo from '../assets/images/wardrobe_cargo_pants_1794905627491.jpg';
+import imgJacket from '../assets/images/wardrobe_work_jacket_1794905627455.jpg';
+import imgSneakers from '../assets/images/wardrobe_sneakers_1794905626993.jpg';
 
-const IMG_BOXY_TEE = '/src/assets/images/wardrobe_boxy_tee_1794905625912.jpg';
-const IMG_HOODIE = '/src/assets/images/wardrobe_heavy_hoodie_1794905626786.jpg';
-const IMG_CARGO = '/src/assets/images/wardrobe_cargo_pants_1794905627491.jpg';
-const IMG_JACKET = '/src/assets/images/wardrobe_work_jacket_1794905627455.jpg';
-const IMG_SNEAKERS = '/src/assets/images/wardrobe_sneakers_1794905626993.jpg';
+export const HERO_EDITORIAL_IMG = heroEditorialImg;
+
+const IMG_BOXY_TEE = imgBoxyTee;
+const IMG_HOODIE = imgHoodie;
+const IMG_CARGO = imgCargo;
+const IMG_JACKET = imgJacket;
+const IMG_SNEAKERS = imgSneakers;
 
 export const DEMO_USER_ID = 'demo_swooosh_concrete_user';
 

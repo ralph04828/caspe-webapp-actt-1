@@ -28,10 +28,18 @@ service cloud.firestore {
         get(/databases/$(database)/documents/follows/$(request.auth.uid + '_' + targetUserId)).data.status == 'accepted';
     }
 
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
     function canViewVisibility(ownerId, visibility) {
       return isOwner(ownerId) ||
         visibility == 'public' ||
         (visibility == 'followers' && isFollowerOf(ownerId));
+    }
+
+    function parentMedia(mediaId) {
+      return get(/databases/$(database)/documents/media/$(mediaId)).data;
     }
 
     // User Profiles
@@ -59,16 +67,63 @@ service cloud.firestore {
       allow delete: if isSignedIn() && existing().uid == request.auth.uid;
     }
 
-    // Compressed WebP Media Assets (Firestore image storage)
+    // Compressed WebP Media Assets (Firestore image storage, <1 MiB per doc)
     match /media/{mediaId} {
       allow get: if canViewVisibility(existing().ownerId, existing().visibility);
       allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
       allow create: if isSignedIn() &&
+        isValidId(mediaId) &&
         incoming().ownerId == request.auth.uid &&
+        incoming().id == mediaId &&
+        incoming().visibility in ['public', 'followers', 'private'] &&
+        incoming().contentType in ['image/webp', 'image/jpeg', 'image/png'] &&
+        incoming().width is int &&
+        incoming().width > 0 &&
+        incoming().width <= 1000 &&
+        incoming().height is int &&
+        incoming().height > 0 &&
+        incoming().height <= 1000 &&
+        incoming().thumbWidth is int &&
+        incoming().thumbWidth > 0 &&
+        incoming().thumbWidth <= 256 &&
+        incoming().thumbHeight is int &&
+        incoming().thumbHeight > 0 &&
+        incoming().thumbHeight <= 256 &&
         incoming().byteSize is int &&
-        incoming().byteSize <= 780000;
-      allow update: if isSignedIn() && existing().ownerId == request.auth.uid;
+        incoming().byteSize > 0 &&
+        incoming().byteSize <= 780000 &&
+        incoming().fullDataUrl is string &&
+        incoming().thumbDataUrl is string;
+      allow update: if isSignedIn() &&
+        existing().ownerId == request.auth.uid &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().visibility in ['public', 'followers', 'private'] &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['visibility', 'updatedAt']);
       allow delete: if isSignedIn() && existing().ownerId == request.auth.uid;
+
+      // Chunk subcollection for edge cases where full WebP exceeds single-doc threshold
+      match /chunks/{chunkId} {
+        allow get: if chunkId.matches('^[0-9]+$') &&
+          exists(/databases/$(database)/documents/media/$(mediaId)) &&
+          canViewVisibility(parentMedia(mediaId).ownerId, parentMedia(mediaId).visibility);
+        allow list: if isSignedIn() &&
+          exists(/databases/$(database)/documents/media/$(mediaId)) &&
+          parentMedia(mediaId).ownerId == request.auth.uid;
+        allow create: if isSignedIn() &&
+          chunkId.matches('^[0-9]+$') &&
+          exists(/databases/$(database)/documents/media/$(mediaId)) &&
+          parentMedia(mediaId).ownerId == request.auth.uid &&
+          incoming().index is int &&
+          incoming().index >= 0 &&
+          incoming().index < 8 &&
+          incoming().data is string &&
+          incoming().byteSize is int &&
+          incoming().byteSize > 0 &&
+          incoming().byteSize <= 500000;
+        allow delete: if isSignedIn() &&
+          exists(/databases/$(database)/documents/media/$(mediaId)) &&
+          parentMedia(mediaId).ownerId == request.auth.uid;
+      }
     }
 
     // Digital Wardrobe
@@ -112,14 +167,18 @@ service cloud.firestore {
       allow delete: if isSignedIn() && existing().userId == request.auth.uid;
     }
 
-    // Comments
+    // Comments (with optional compact media attachment references)
     match /comments/{commentId} {
       allow read: if isSignedIn();
       allow create: if isSignedIn() &&
         incoming().userId == request.auth.uid &&
         incoming().text is string &&
         incoming().text.size() >= 1 &&
-        incoming().text.size() <= 1000;
+        incoming().text.size() <= 1000 &&
+        (!('imageUrl' in incoming()) || (incoming().imageUrl is string && incoming().imageUrl.size() <= 160)) &&
+        (!('thumbUrl' in incoming()) || (incoming().thumbUrl is string && incoming().thumbUrl.size() <= 160)) &&
+        (!('mediaId' in incoming()) || (incoming().mediaId is string && incoming().mediaId.size() <= 128)) &&
+        (!('altText' in incoming()) || (incoming().altText is string && incoming().altText.size() <= 240));
       allow delete: if isSignedIn() && (existing().userId == request.auth.uid || existing().postAuthorId == request.auth.uid);
     }
 

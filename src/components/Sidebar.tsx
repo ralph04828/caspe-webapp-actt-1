@@ -2,6 +2,7 @@ import React from 'react';
 import { NavSection } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useSocial } from '../context/SocialContext';
+import { AvatarImage } from './AvatarImage';
 import {
   Home,
   Compass,
@@ -55,8 +56,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     onSelectSection(id);
     onCloseMobile();
   };
-
-  const initial = (userProfile?.displayName || userProfile?.username || 'S').charAt(0).toUpperCase();
 
   const content = (
     <div className="flex flex-col justify-between h-full mica-surface text-[#171717] dark:text-[#e5e1da] border-r border-[#d4cfc5] dark:border-[#404040] w-64 select-none">
@@ -138,18 +137,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
           onClick={() => handleNav('profile')}
           className="w-full flex items-center gap-3 min-w-0 text-left rounded-control p-1 hover:bg-white/60 dark:hover:bg-[#303030] transition-colors cursor-pointer"
         >
-          {userProfile?.photoURL ? (
-            <img
-              src={userProfile.photoURL}
-              alt={userProfile.displayName}
-              referrerPolicy="no-referrer"
-              className="w-9 h-9 rounded-full object-cover border border-[#d4cfc5] dark:border-[#404040] shrink-0"
-            />
-          ) : (
-            <div className="w-9 h-9 rounded-full bg-[#171717] dark:bg-[#e5e1da] text-[#f5f4f0] dark:text-[#171717] font-display font-bold text-sm flex items-center justify-center shrink-0">
-              {initial}
-            </div>
-          )}
+          <AvatarImage
+            src={userProfile?.photoURL}
+            mediaId={userProfile?.mediaId}
+            name={userProfile?.displayName || userProfile?.username || 'S'}
+            sizeClass="w-9 h-9"
+            textSizeClass="text-sm"
+          />
           <div className="min-w-0 flex-1">
             <p className="text-xs font-semibold truncate">
               {userProfile?.displayName || 'SWOOOSH Member'}

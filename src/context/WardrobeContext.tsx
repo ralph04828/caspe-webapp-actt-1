@@ -37,7 +37,7 @@ import {
   deleteSchedule,
   saveWearLog,
 } from '../services/firestoreService';
-import { deleteImageAsset } from '../services/storageService';
+import { deleteImageAsset, updateMediaVisibility } from '../services/storageService';
 
 interface DemoStorageState {
   wardrobe: ClothingItem[];
@@ -266,6 +266,15 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const editClothing = async (id: string, updates: Partial<ClothingItem>) => {
+    const existing = wardrobe.find((item) => item.id === id);
+    const targetMediaId = updates.mediaId ?? existing?.mediaId;
+    if (updates.visibility && targetMediaId) {
+      await updateMediaVisibility(targetMediaId, updates.visibility);
+    }
+    if (updates.mediaId && existing?.mediaId && updates.mediaId !== existing.mediaId) {
+      deleteImageAsset(existing.mediaId).catch(() => {});
+    }
+
     if (isDemoMode) {
       const nextW = wardrobe.map((item) =>
         item.id === id ? { ...item, ...updates, updatedAt: new Date().toISOString() } : item
@@ -374,6 +383,12 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const editOutfit = async (id: string, updates: Partial<Outfit>) => {
+    const existing = outfits.find((o) => o.id === id);
+    const targetMediaId = updates.mediaId ?? existing?.mediaId;
+    if (updates.visibility && targetMediaId) {
+      await updateMediaVisibility(targetMediaId, updates.visibility);
+    }
+
     if (isDemoMode) {
       const nextO = outfits.map((o) =>
         o.id === id ? { ...o, ...updates, updatedAt: new Date().toISOString() } : o
@@ -386,7 +401,9 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const removeOutfit = async (outfit: Outfit) => {
-    await deleteImageAsset(outfit.mediaId);
+    if (outfit.mediaId && !wardrobe.some((w) => w.mediaId === outfit.mediaId)) {
+      await deleteImageAsset(outfit.mediaId);
+    }
     if (isDemoMode) {
       const nextO = outfits.filter((o) => o.id !== outfit.id);
       const nextS = schedules.filter((s) => s.outfitId !== outfit.id);
@@ -424,6 +441,12 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const editWishlist = async (id: string, updates: Partial<WishlistItem>) => {
+    const existing = wishlist.find((w) => w.id === id);
+    const targetMediaId = updates.mediaId ?? existing?.mediaId;
+    if (updates.visibility && targetMediaId) {
+      await updateMediaVisibility(targetMediaId, updates.visibility);
+    }
+
     if (isDemoMode) {
       const nextWish = wishlist.map((w) =>
         w.id === id ? { ...w, ...updates, updatedAt: new Date().toISOString() } : w
@@ -447,7 +470,13 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const markWishlistGotItAndMove = async (item: WishlistItem) => {
-    await editWishlist(item.id, { status: 'got_it' });
+    const targetVisibility = userProfile?.defaultItemVisibility ?? 'public';
+    if (item.mediaId && item.visibility !== targetVisibility) {
+      await updateMediaVisibility(item.mediaId, targetVisibility);
+    }
+
+    // Transfer ownership of mediaId to the new wardrobe garment so deleting the wishlist entry later never deletes the wardrobe photo
+    await editWishlist(item.id, { status: 'got_it', mediaId: undefined });
     const created = await addClothing({
       name: item.name,
       category: (item.category as any) || 'Other',
@@ -458,10 +487,11 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       styleTags: item.styleTags || [],
       description: item.notes,
       altText: `${item.colorTags[0] || ''} ${item.brand} ${item.name}`.trim(),
-      visibility: userProfile?.defaultItemVisibility ?? 'public',
+      visibility: targetVisibility,
       laundryStatus: 'clean',
       imageUrl: item.imageUrl,
       thumbUrl: item.thumbUrl,
+      mediaId: item.mediaId,
       wearCount: 0,
     });
     return created;

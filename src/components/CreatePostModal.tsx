@@ -3,7 +3,7 @@ import { CommentPolicy, PostType, Visibility } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useWardrobe } from '../context/WardrobeContext';
 import { useSocial } from '../context/SocialContext';
-import { uploadImageAsset } from '../services/storageService';
+import { preparePreviewDataUrl, uploadImageAsset } from '../services/storageService';
 import { removeBackgroundClient } from '../utils/bgRemoval';
 import { GarmentImage } from './GarmentImage';
 import {
@@ -80,9 +80,12 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
     setError(null);
     setCutoutDataUrl(null);
     setUseCutout(false);
-    const reader = new FileReader();
-    reader.onload = () => setPhotoDataUrl(String(reader.result || ''));
-    reader.readAsDataURL(file);
+    try {
+      const compressedDataUrl = await preparePreviewDataUrl(file);
+      setPhotoDataUrl(compressedDataUrl);
+    } catch (err: any) {
+      setError(err?.message || 'Could not process selected photo.');
+    }
   };
 
   const handleRemoveBackground = async () => {

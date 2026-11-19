@@ -1,6 +1,7 @@
 import React from 'react';
 import { useSocial } from '../context/SocialContext';
 import { formatRelativeTime } from '../utils/formatters';
+import { AvatarImage } from './AvatarImage';
 import {
   Bell,
   Check,
@@ -88,9 +89,12 @@ export const NotificationsPage: React.FC<NotificationsPageProps> = ({
                   onClick={() => onOpenProfile(req.followerId)}
                   className="flex items-center gap-2.5 min-w-0 text-left cursor-pointer"
                 >
-                  <div className="w-9 h-9 rounded-full bg-[#171717] dark:bg-[#e5e1da] text-[#f5f4f0] dark:text-[#171717] font-bold text-xs flex items-center justify-center shrink-0">
-                    {req.followerName.charAt(0)}
-                  </div>
+                  <AvatarImage
+                    src={req.followerPhotoUrl}
+                    name={req.followerName || req.followerUsername}
+                    sizeClass="w-9 h-9"
+                    textSizeClass="text-xs"
+                  />
                   <div className="min-w-0">
                     <p className="text-xs font-semibold truncate">{req.followerName}</p>
                     <p className="text-[11px] text-[#4e4c46] dark:text-[#c2bfb8] truncate">
@@ -149,8 +153,19 @@ export const NotificationsPage: React.FC<NotificationsPageProps> = ({
                 }`}
               >
                 <div className="flex items-start gap-3 min-w-0">
-                  <div className="w-9 h-9 rounded-full bg-[#eae7e0] dark:bg-[#303030] flex items-center justify-center shrink-0 mt-0.5">
-                    <Icon className="w-4 h-4" />
+                  <div className="relative shrink-0 mt-0.5">
+                    {n.actorPhotoUrl ? (
+                      <AvatarImage
+                        src={n.actorPhotoUrl}
+                        name={n.actorName || n.actorUsername}
+                        sizeClass="w-9 h-9"
+                        textSizeClass="text-xs"
+                      />
+                    ) : (
+                      <div className="w-9 h-9 rounded-full bg-[#eae7e0] dark:bg-[#303030] flex items-center justify-center">
+                        <Icon className="w-4 h-4" />
+                      </div>
+                    )}
                   </div>
                   <div className="min-w-0 space-y-0.5">
                     <p className="text-xs leading-relaxed">

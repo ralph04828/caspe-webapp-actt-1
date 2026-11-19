@@ -12,7 +12,7 @@ import {
 } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useWardrobe } from '../context/WardrobeContext';
-import { uploadImageAsset } from '../services/storageService';
+import { preparePreviewDataUrl, resolveMediaRef, uploadImageAsset } from '../services/storageService';
 import { removeBackgroundClient } from '../utils/bgRemoval';
 import { autoTagGarmentPhoto } from '../services/aiService';
 import { buildAutoAltText } from '../utils/formatters';
@@ -144,21 +144,38 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
     setModalOpen(true);
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setCutoutPhotoUrl(null);
     setUseCutout(false);
-    const reader = new FileReader();
-    reader.onload = () => setRawPhotoUrl(String(reader.result || ''));
-    reader.readAsDataURL(file);
+    try {
+      const compressedDataUrl = await preparePreviewDataUrl(file);
+      setRawPhotoUrl(compressedDataUrl);
+    } catch (err: any) {
+      onToast(err?.message || 'Could not process image file.', 'error');
+    }
+  };
+
+  const resolveEditableDataUrl = async (src: string | null): Promise<string | null> => {
+    if (!src) return null;
+    if (src.startsWith('data:') || /^https?:\/\//i.test(src) || src.startsWith('/')) {
+      return src;
+    }
+    const res = await resolveMediaRef(src, editingItem?.mediaId);
+    if (res.status === 'ready' && res.url) {
+      return res.url;
+    }
+    throw new Error(res.reason || 'Photo unavailable to process. Please re-upload.');
   };
 
   const handleRemoveBg = async () => {
     if (!rawPhotoUrl) return;
     setBgProgress(10);
     try {
-      const res = await removeBackgroundClient(rawPhotoUrl, 36, setBgProgress);
+      const usableUrl = await resolveEditableDataUrl(rawPhotoUrl);
+      if (!usableUrl) return;
+      const res = await removeBackgroundClient(usableUrl, 36, setBgProgress);
       setCutoutPhotoUrl(res.cutoutDataUrl);
       setUseCutout(true);
       onToast('Background removed! Compare original vs cutout.');
@@ -177,8 +194,13 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
     }
     setAutoTagging(true);
     try {
-      const mime = img.startsWith('data:image/webp') ? 'image/webp' : 'image/jpeg';
-      const tags = await autoTagGarmentPhoto(img, mime);
+      const usableImg = await resolveEditableDataUrl(img);
+      if (!usableImg) {
+        onToast('Upload a garment photo first to auto-tag.', 'error');
+        return;
+      }
+      const mime = usableImg.startsWith('data:image/webp') ? 'image/webp' : 'image/jpeg';
+      const tags = await autoTagGarmentPhoto(usableImg, mime);
       if (tags.name) setName(tags.name);
       if (tags.category && CLOTHING_CATEGORIES.includes(tags.category)) setCategory(tags.category);
       if (tags.color) setColor(tags.color);
@@ -211,7 +233,11 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
       let mediaId = editingItem?.mediaId;
 
       const activeImg = useCutout && cutoutPhotoUrl ? cutoutPhotoUrl : rawPhotoUrl;
-      if (activeImg && activeImg.startsWith('data:')) {
+      if (!activeImg) {
+        imageUrl = undefined;
+        thumbUrl = undefined;
+        mediaId = undefined;
+      } else if (activeImg.startsWith('data:')) {
         const uploaded = await uploadImageAsset(activeImg, userProfile.uid, visibility, isDemoMode);
         imageUrl = uploaded.imageUrl;
         thumbUrl = uploaded.thumbUrl;
@@ -442,9 +468,11 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
                 <div className="relative aspect-square bg-[#eae7e0] dark:bg-[#171717]">
                   <GarmentImage
                     src={item.thumbUrl || item.imageUrl}
+                    mediaId={item.mediaId}
                     alt={item.altText || item.name}
                     fallbackLabel={item.name}
                     isCutout={item.isCutout}
+                    onReuploadClick={() => openEdit(item)}
                   />
                   <button
                     type="button"
@@ -590,12 +618,13 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
                 {previewImg ? (
                   <div className="space-y-2">
                     <div className="relative h-48 rounded-card overflow-hidden border border-[#d4cfc5] dark:border-[#404040] bg-[#eae7e0] dark:bg-[#171717]">
-                      <GarmentImage src={previewImg} alt="Garment preview" isCutout={useCutout} />
+                      <GarmentImage src={previewImg} mediaId={editingItem?.mediaId} alt="Garment preview" isCutout={useCutout} />
                       <button
                         type="button"
                         onClick={() => {
                           setRawPhotoUrl(null);
                           setCutoutPhotoUrl(null);
+                          setUseCutout(false);
                         }}
                         aria-label="Clear photo"
                         className="absolute top-2 right-2 p-1.5 rounded-full bg-black/70 text-white cursor-pointer"

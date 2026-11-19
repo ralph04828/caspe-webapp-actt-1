@@ -20,6 +20,7 @@ import {
   sendAIFashionChat,
 } from '../services/aiService';
 import { getCachedWeather } from '../services/weatherService';
+import { preparePreviewDataUrl } from '../services/storageService';
 import { GarmentImage } from './GarmentImage';
 import {
   Sparkles,
@@ -144,13 +145,16 @@ export const SwoooshAIPage: React.FC<SwoooshAIPageProps> = ({ onNavigate, onToas
     }
   };
 
-  const handleFeedbackUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFeedbackUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setFeedbackMime(file.type || 'image/jpeg');
-    const reader = new FileReader();
-    reader.onload = () => setFeedbackImg(String(reader.result || ''));
-    reader.readAsDataURL(file);
+    try {
+      const compressed = await preparePreviewDataUrl(file);
+      setFeedbackMime(compressed.startsWith('data:image/webp') ? 'image/webp' : 'image/jpeg');
+      setFeedbackImg(compressed);
+    } catch (err: any) {
+      onToast(err?.message || 'Could not process outfit photo.', 'error');
+    }
   };
 
   const handleRunFeedback = async () => {
@@ -366,7 +370,7 @@ export const SwoooshAIPage: React.FC<SwoooshAIPageProps> = ({ onNavigate, onToas
                           className="rounded-control border border-[#d4cfc5] dark:border-[#404040] overflow-hidden bg-[#f5f4f0] dark:bg-[#171717]"
                         >
                           <div className="aspect-square">
-                            <GarmentImage src={item!.thumbUrl || item!.imageUrl} alt={item!.name} />
+                            <GarmentImage src={item!.thumbUrl || item!.imageUrl} mediaId={item!.mediaId} alt={item!.name} />
                           </div>
                           <p className="p-1.5 text-[11px] font-semibold truncate">{item!.name}</p>
                         </div>

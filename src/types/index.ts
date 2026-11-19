@@ -97,10 +97,23 @@ export interface MediaAsset {
   id: string;
   ownerId: string;
   visibility: Visibility;
+  contentType: string;
+  width: number;
+  height: number;
+  thumbWidth: number;
+  thumbHeight: number;
   fullDataUrl: string;
   thumbDataUrl: string;
   byteSize: number;
+  chunkCount?: number;
   createdAt: string;
+  updatedAt?: string;
+}
+
+export interface MediaChunk {
+  index: number;
+  data: string;
+  byteSize: number;
 }
 
 export interface ClothingItem {
@@ -136,6 +149,7 @@ export interface OutfitPieceSnapshot {
   color: string;
   imageUrl?: string;
   thumbUrl?: string;
+  mediaId?: string;
   visibility: Visibility;
   isPrivatePlaceholder?: boolean;
 }
@@ -219,6 +233,10 @@ export interface PostComment {
   authorName: string;
   authorPhotoUrl?: string;
   text: string;
+  imageUrl?: string;
+  thumbUrl?: string;
+  mediaId?: string;
+  altText?: string;
   mentions: string[];
   createdAt: string;
 }

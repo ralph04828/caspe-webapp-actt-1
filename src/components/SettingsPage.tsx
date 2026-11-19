@@ -6,7 +6,8 @@ import { useWardrobe } from '../context/WardrobeContext';
 import { useSocial } from '../context/SocialContext';
 import { uploadImageAsset } from '../services/storageService';
 import { normalizeUsername } from '../utils/formatters';
-import { Download, Lock, Save, Shield, Trash2, Upload } from 'lucide-react';
+import { AvatarImage } from './AvatarImage';
+import { Download, Loader2, Lock, Save, Shield, Trash2, Upload } from 'lucide-react';
 
 interface SettingsPageProps {
   onToast: (msg: string, type?: 'success' | 'error') => void;
@@ -31,6 +32,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onToast }) => {
   );
   const [autoDirtyOnWear, setAutoDirtyOnWear] = useState(Boolean(userProfile?.autoDirtyOnWear));
   const [saving, setSaving] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
   const [currentPwd, setCurrentPwd] = useState('');
   const [newPwd, setNewPwd] = useState('');
@@ -39,12 +41,15 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onToast }) => {
   const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !userProfile) return;
+    setUploadingAvatar(true);
     try {
       const uploaded = await uploadImageAsset(file, userProfile.uid, 'public', isDemoMode);
       await updateAccountProfile({ photoURL: uploaded.thumbUrl, mediaId: uploaded.mediaId });
       onToast('Profile photo updated.');
     } catch (err: any) {
       onToast(err?.message || 'Could not update photo.', 'error');
+    } finally {
+      setUploadingAvatar(false);
     }
   };
 
@@ -122,10 +127,28 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onToast }) => {
         className="p-6 rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] space-y-4"
       >
         <div className="flex items-center justify-between gap-4">
-          <h2 className="font-display font-bold text-base">Profile & Visibility</h2>
+          <div className="flex items-center gap-3">
+            <AvatarImage
+              src={userProfile?.photoURL}
+              mediaId={userProfile?.mediaId}
+              name={userProfile?.displayName || userProfile?.username || 'S'}
+              sizeClass="w-12 h-12"
+              textSizeClass="text-base"
+            />
+            <div>
+              <h2 className="font-display font-bold text-base">Profile & Visibility</h2>
+              <p className="text-[11px] text-[#4e4c46] dark:text-[#c2bfb8]">
+                Avatar is compressed to WebP &amp; synced across devices.
+              </p>
+            </div>
+          </div>
           <label className="px-3 py-1.5 rounded-control border border-[#d4cfc5] dark:border-[#404040] text-xs font-semibold flex items-center gap-1.5 cursor-pointer">
-            <Upload className="w-3.5 h-3.5" />
-            <span>Change Avatar</span>
+            {uploadingAvatar ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Upload className="w-3.5 h-3.5" />
+            )}
+            <span>{uploadingAvatar ? 'Uploading...' : 'Change Avatar'}</span>
             <input type="file" accept="image/*" onChange={handleAvatarUpload} className="sr-only" />
           </label>
         </div>

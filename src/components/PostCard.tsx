@@ -2,7 +2,9 @@ import React, { useState } from 'react';
 import { PostComment, SocialPost } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useSocial } from '../context/SocialContext';
+import { preparePreviewDataUrl, uploadImageAsset } from '../services/storageService';
 import { formatRelativeTime } from '../utils/formatters';
+import { AvatarImage } from './AvatarImage';
 import { GarmentImage } from './GarmentImage';
 import { VisibilityBadge } from './VisibilityBadge';
 import {
@@ -17,6 +19,9 @@ import {
   Ban,
   Send,
   Lock,
+  ImagePlus,
+  X,
+  Loader2,
 } from 'lucide-react';
 
 interface PostCardProps {
@@ -34,7 +39,7 @@ export const PostCard: React.FC<PostCardProps> = ({
   onRemixPost,
   onToast,
 }) => {
-  const { userProfile } = useAuth();
+  const { userProfile, isDemoMode } = useAuth();
   const {
     likedPostIds,
     savedPostIds,
@@ -54,6 +59,7 @@ export const PostCard: React.FC<PostCardProps> = ({
   const [comments, setComments] = useState<PostComment[]>([]);
   const [loadingComments, setLoadingComments] = useState(false);
   const [commentInput, setCommentInput] = useState('');
+  const [commentImgDataUrl, setCommentImgDataUrl] = useState<string | null>(null);
   const [submittingComment, setSubmittingComment] = useState(false);
 
   const isOwner = userProfile?.uid === post.userId;
@@ -74,14 +80,44 @@ export const PostCard: React.FC<PostCardProps> = ({
     }
   };
 
+  const handleCommentFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const compressed = await preparePreviewDataUrl(file);
+      setCommentImgDataUrl(compressed);
+    } catch (err: any) {
+      onToast(err?.message || 'Could not process comment image.', 'error');
+    }
+    e.target.value = '';
+  };
+
   const handleAddComment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!commentInput.trim()) return;
+    if ((!commentInput.trim() && !commentImgDataUrl) || !userProfile) return;
     setSubmittingComment(true);
     try {
-      const created = await addComment(post, commentInput);
+      let attachment:
+        | { imageUrl: string; thumbUrl: string; mediaId: string; altText?: string }
+        | undefined;
+      if (commentImgDataUrl) {
+        const uploaded = await uploadImageAsset(
+          commentImgDataUrl,
+          userProfile.uid,
+          post.visibility,
+          isDemoMode
+        );
+        attachment = {
+          imageUrl: uploaded.imageUrl,
+          thumbUrl: uploaded.thumbUrl,
+          mediaId: uploaded.mediaId,
+          altText: commentInput.trim() || 'Comment attachment',
+        };
+      }
+      const created = await addComment(post, commentInput, attachment);
       setComments((prev) => [...prev, created]);
       setCommentInput('');
+      setCommentImgDataUrl(null);
     } catch (err: any) {
       onToast(err?.message || 'Could not add comment.', 'error');
     } finally {
@@ -121,8 +157,6 @@ export const PostCard: React.FC<PostCardProps> = ({
     });
   };
 
-  const initial = (post.authorName || post.authorUsername || 'S').charAt(0).toUpperCase();
-
   return (
     <article className="rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] shadow-sm overflow-hidden transition-shadow duration-200 hover:shadow-md">
       {/* Header */}
@@ -132,18 +166,12 @@ export const PostCard: React.FC<PostCardProps> = ({
           onClick={() => onOpenProfile(post.userId)}
           className="flex items-center gap-3 min-w-0 text-left cursor-pointer group"
         >
-          {post.authorPhotoUrl ? (
-            <img
-              src={post.authorPhotoUrl}
-              alt={post.authorName}
-              referrerPolicy="no-referrer"
-              className="w-10 h-10 rounded-full object-cover border border-[#d4cfc5] dark:border-[#404040] shrink-0"
-            />
-          ) : (
-            <div className="w-10 h-10 rounded-full bg-[#171717] dark:bg-[#e5e1da] text-[#f5f4f0] dark:text-[#171717] font-display font-bold text-sm flex items-center justify-center shrink-0">
-              {initial}
-            </div>
-          )}
+          <AvatarImage
+            src={post.authorPhotoUrl}
+            name={post.authorName || post.authorUsername || 'S'}
+            sizeClass="w-10 h-10"
+            textSizeClass="text-sm"
+          />
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
               <span className="text-sm font-semibold truncate group-hover:underline">
@@ -259,10 +287,11 @@ export const PostCard: React.FC<PostCardProps> = ({
       )}
 
       {/* Main Photo */}
-      {post.mediaUrl && (
+      {(post.mediaUrl || post.mediaId) && (
         <div className="aspect-[4/3] sm:aspect-[16/11] bg-[#eae7e0] dark:bg-[#171717] overflow-hidden border-y border-[#d4cfc5]/60 dark:border-[#404040]/60">
           <GarmentImage
             src={post.mediaUrl}
+            mediaId={post.mediaId}
             alt={post.altText || post.caption}
             className="w-full h-full object-cover"
           />
@@ -283,7 +312,11 @@ export const PostCard: React.FC<PostCardProps> = ({
                     <Lock className="w-3.5 h-3.5 opacity-70" />
                   </div>
                 ) : (
-                  <GarmentImage src={piece.imageUrl} alt={piece.name} />
+                  <GarmentImage
+                    src={piece.thumbUrl || piece.imageUrl}
+                    mediaId={piece.mediaId}
+                    alt={piece.name}
+                  />
                 )}
               </div>
               <div className="min-w-0 max-w-[140px]">
@@ -380,23 +413,42 @@ export const PostCard: React.FC<PostCardProps> = ({
               {post.commentPolicy === 'off' ? 'Comments are disabled on this post.' : 'No comments yet. Start the conversation.'}
             </p>
           ) : (
-            <div className="space-y-2.5 max-h-60 overflow-y-auto">
+            <div className="space-y-2.5 max-h-72 overflow-y-auto">
               {comments.map((c) => {
                 const canDelete = userProfile?.uid === c.userId || isOwner;
                 return (
                   <div key={c.id} className="flex items-start justify-between gap-2 text-xs">
-                    <div>
-                      <button
-                        type="button"
-                        onClick={() => onOpenProfile(c.userId)}
-                        className="font-semibold hover:underline cursor-pointer mr-1.5"
-                      >
-                        @{c.authorUsername}
-                      </button>
-                      <span>{c.text}</span>
-                      <span className="ml-2 text-[10px] text-[#4e4c46] dark:text-[#c2bfb8]">
-                        {formatRelativeTime(c.createdAt)}
-                      </span>
+                    <div className="flex items-start gap-2 min-w-0">
+                      <AvatarImage
+                        src={c.authorPhotoUrl}
+                        name={c.authorName || c.authorUsername}
+                        sizeClass="w-6 h-6"
+                        textSizeClass="text-[10px]"
+                      />
+                      <div className="min-w-0 space-y-1.5">
+                        <div>
+                          <button
+                            type="button"
+                            onClick={() => onOpenProfile(c.userId)}
+                            className="font-semibold hover:underline cursor-pointer mr-1.5"
+                          >
+                            @{c.authorUsername}
+                          </button>
+                          <span>{c.text}</span>
+                          <span className="ml-2 text-[10px] text-[#4e4c46] dark:text-[#c2bfb8]">
+                            {formatRelativeTime(c.createdAt)}
+                          </span>
+                        </div>
+                        {(c.thumbUrl || c.imageUrl || c.mediaId) && (
+                          <div className="w-24 h-24 rounded-control overflow-hidden border border-[#d4cfc5] dark:border-[#404040] bg-[#eae7e0] dark:bg-[#242424]">
+                            <GarmentImage
+                              src={c.thumbUrl || c.imageUrl}
+                              mediaId={c.mediaId}
+                              alt={c.altText || 'Comment attachment'}
+                            />
+                          </div>
+                        )}
+                      </div>
                     </div>
                     {canDelete && (
                       <button
@@ -415,22 +467,53 @@ export const PostCard: React.FC<PostCardProps> = ({
           )}
 
           {post.commentPolicy !== 'off' && (
-            <form onSubmit={handleAddComment} className="flex gap-2">
-              <input
-                type="text"
-                value={commentInput}
-                onChange={(e) => setCommentInput(e.target.value)}
-                placeholder="Write a supportive style note..."
-                className="flex-1 px-3 py-2 rounded-control text-xs bg-white dark:bg-[#242424] border border-[#d4cfc5] dark:border-[#404040]"
-              />
-              <button
-                type="submit"
-                disabled={submittingComment || !commentInput.trim()}
-                aria-label="Post comment"
-                className="px-3.5 py-2 rounded-control bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-semibold flex items-center gap-1 disabled:opacity-40 cursor-pointer"
-              >
-                <Send className="w-3.5 h-3.5" />
-              </button>
+            <form onSubmit={handleAddComment} className="space-y-2">
+              {commentImgDataUrl && (
+                <div className="relative inline-block w-20 h-20 rounded-control overflow-hidden border border-[#d4cfc5] dark:border-[#404040]">
+                  <GarmentImage src={commentImgDataUrl} alt="Comment attachment preview" />
+                  <button
+                    type="button"
+                    onClick={() => setCommentImgDataUrl(null)}
+                    aria-label="Remove comment photo"
+                    className="absolute top-1 right-1 p-1 rounded-full bg-black/75 text-white cursor-pointer"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              )}
+              <div className="flex gap-2">
+                <label
+                  title="Attach photo to comment"
+                  className="px-2.5 py-2 rounded-control border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] hover:bg-[#eae7e0] dark:hover:bg-[#303030] flex items-center justify-center cursor-pointer shrink-0"
+                >
+                  <ImagePlus className="w-4 h-4" />
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleCommentFileChange}
+                    className="sr-only"
+                  />
+                </label>
+                <input
+                  type="text"
+                  value={commentInput}
+                  onChange={(e) => setCommentInput(e.target.value)}
+                  placeholder="Write a supportive style note..."
+                  className="flex-1 px-3 py-2 rounded-control text-xs bg-white dark:bg-[#242424] border border-[#d4cfc5] dark:border-[#404040]"
+                />
+                <button
+                  type="submit"
+                  disabled={submittingComment || (!commentInput.trim() && !commentImgDataUrl)}
+                  aria-label="Post comment"
+                  className="px-3.5 py-2 rounded-control bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-semibold flex items-center gap-1 disabled:opacity-40 cursor-pointer"
+                >
+                  {submittingComment ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Send className="w-3.5 h-3.5" />
+                  )}
+                </button>
+              </div>
             </form>
           )}
         </div>
