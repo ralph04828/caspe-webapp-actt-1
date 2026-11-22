@@ -5,7 +5,6 @@ import {
   ClothingItem,
   LaundryStatus,
   SEASON_TAGS,
-  SEASON_TAGS as ALL_SEASONS,
   STYLE_CATEGORIES,
   SeasonTag,
   Visibility,
@@ -14,14 +13,21 @@ import { useAuth } from '../context/AuthContext';
 import { useWardrobe } from '../context/WardrobeContext';
 import { preparePreviewDataUrl, resolveMediaRef, uploadImageAsset } from '../services/storageService';
 import { removeBackgroundClient } from '../utils/bgRemoval';
-import { autoTagGarmentPhoto } from '../services/aiService';
 import { buildAutoAltText } from '../utils/formatters';
+import {
+  getDraftSessionKey,
+  loadSessionJson,
+  removeSessionKey,
+  saveSessionJson,
+} from '../utils/draftStorage';
 import { GarmentImage } from './GarmentImage';
 import { VisibilityBadge } from './VisibilityBadge';
+import { CropAspectKey, PhotoCropEditor, PhotoCropState, createDefaultCropState } from './PhotoEditorModal';
+import { DiscardDraftDialog } from './DiscardDraftDialog';
+import { ErrorBoundary } from './ErrorBoundary';
 import {
   Plus,
   Search,
-  Sparkles,
   Scissors,
   CheckCircle2,
   Droplets,
@@ -32,23 +38,74 @@ import {
   X,
   CheckSquare,
   Square,
-  Loader2,
   Share2,
+  Camera,
+  ArrowLeft,
+  Crop,
+  Loader2,
 } from 'lucide-react';
 
 interface WardrobePageProps {
   openAddModalOnMount?: boolean;
   onConsumedOpenAdd?: () => void;
+  onModalStateChange?: (isOpen: boolean) => void;
   onSharePiece?: (item: ClothingItem) => void;
   onToast: (msg: string, type?: 'success' | 'error') => void;
 }
 
+type WardrobeModalStep = 'photo' | 'editor' | 'details';
+
+interface WardrobeDraft {
+  step: WardrobeModalStep;
+  editingItemId: string | null;
+  rawPhotoUrl: string | null;
+  cropState: PhotoCropState | null;
+  croppedPhotoUrl: string | null;
+  cutoutPhotoUrl: string | null;
+  useCutout: boolean;
+  name: string;
+  category: ClothingCategory;
+  brand: string;
+  color: string;
+  size: string;
+  seasons: SeasonTag[];
+  styleTags: string[];
+  visibility: Visibility;
+  laundryStatus: LaundryStatus;
+  description: string;
+  altText: string;
+}
+
 const LAUNDRY_CYCLE: LaundryStatus[] = ['clean', 'dirty', 'washing'];
-const VISIBILITY_CYCLE: Visibility[] = ['public', 'followers', 'private'];
+const VISIBILITY_CYCLE: Visibility[] = ['public', 'friends', 'followers', 'private'];
+
+function makeEmptyWardrobeDraft(defaultVis: Visibility): WardrobeDraft {
+  return {
+    step: 'photo',
+    editingItemId: null,
+    rawPhotoUrl: null,
+    cropState: null,
+    croppedPhotoUrl: null,
+    cutoutPhotoUrl: null,
+    useCutout: false,
+    name: '',
+    category: 'T-shirts',
+    brand: '',
+    color: '',
+    size: 'L',
+    seasons: ['All-Season'],
+    styleTags: ['Streetwear'],
+    visibility: defaultVis,
+    laundryStatus: 'clean',
+    description: '',
+    altText: '',
+  };
+}
 
 export const WardrobePage: React.FC<WardrobePageProps> = ({
   openAddModalOnMount,
   onConsumedOpenAdd,
+  onModalStateChange,
   onSharePiece,
   onToast,
 }) => {
@@ -62,6 +119,9 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
     markManyClean,
   } = useWardrobe();
 
+  const defaultVis = userProfile?.defaultItemVisibility || 'public';
+  const draftKey = getDraftSessionKey('wardrobe', userProfile?.uid || 'anon');
+
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('All');
   const [laundryFilter, setLaundryFilter] = useState<'all' | LaundryStatus>('all');
@@ -69,92 +129,157 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<ClothingItem | null>(null);
+  const [draft, setDraft] = useState<WardrobeDraft>(() => makeEmptyWardrobeDraft(defaultVis));
 
-  // Form state (strictly zero price/cost fields)
-  const [name, setName] = useState('');
-  const [category, setCategory] = useState<ClothingCategory>('T-shirts');
-  const [brand, setBrand] = useState('');
-  const [color, setColor] = useState('');
-  const [size, setSize] = useState('L');
-  const [seasons, setSeasons] = useState<SeasonTag[]>(['All-Season']);
-  const [styleTags, setStyleTags] = useState<string[]>(['Streetwear']);
-  const [visibility, setVisibility] = useState<Visibility>(userProfile?.defaultItemVisibility || 'public');
-  const [laundryStatus, setFormLaundry] = useState<LaundryStatus>('clean');
-  const [description, setDescription] = useState('');
-  const [altText, setAltText] = useState('');
-
-  const [rawPhotoUrl, setRawPhotoUrl] = useState<string | null>(null);
-  const [cutoutPhotoUrl, setCutoutPhotoUrl] = useState<string | null>(null);
-  const [useCutout, setUseCutout] = useState(false);
+  const [preparingPhoto, setPreparingPhoto] = useState(false);
+  const [resolvingForCrop, setResolvingForCrop] = useState(false);
   const [bgProgress, setBgProgress] = useState<number | null>(null);
-  const [autoTagging, setAutoTagging] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [modalError, setModalError] = useState<string | null>(null);
+  const [discardPromptOpen, setDiscardPromptOpen] = useState(false);
 
+  const updateDraft = (updater: Partial<WardrobeDraft> | ((prev: WardrobeDraft) => WardrobeDraft)) => {
+    setDraft((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : { ...prev, ...updater };
+      return next;
+    });
+  };
+
+  // Restore any interrupted Add Garment draft if mobile camera/gallery triggered a tab reload
   useEffect(() => {
-    if (openAddModalOnMount) {
+    const saved = loadSessionJson<WardrobeDraft>(draftKey);
+    if (saved && !saved.editingItemId && (openAddModalOnMount || saved.rawPhotoUrl || saved.name)) {
+      setEditingItem(null);
+      setDraft({ ...makeEmptyWardrobeDraft(defaultVis), ...saved });
+      setModalOpen(true);
+      onConsumedOpenAdd?.();
+    } else if (openAddModalOnMount) {
       openAdd();
       onConsumedOpenAdd?.();
     }
-  }, [openAddModalOnMount]);
+  }, [openAddModalOnMount, draftKey]);
+
+  // Persist add-mode draft in sessionStorage while modal is open
+  useEffect(() => {
+    onModalStateChange?.(modalOpen);
+    if (!modalOpen || editingItem) return;
+    saveSessionJson(draftKey, draft);
+  }, [modalOpen, editingItem, draft, draftKey]);
+
+  const hasUnsavedChanges = useMemo(() => {
+    if (!modalOpen) return false;
+    if (editingItem) {
+      return (
+        draft.name !== editingItem.name ||
+        draft.brand !== editingItem.brand ||
+        draft.color !== editingItem.color ||
+        draft.description !== (editingItem.description || '') ||
+        Boolean(draft.croppedPhotoUrl?.startsWith('data:')) ||
+        Boolean(draft.cutoutPhotoUrl)
+      );
+    }
+    return Boolean(
+      draft.rawPhotoUrl ||
+        draft.croppedPhotoUrl ||
+        draft.name.trim() ||
+        draft.brand.trim() ||
+        draft.color.trim() ||
+        draft.description.trim()
+    );
+  }, [modalOpen, editingItem, draft]);
+
+  const attemptCloseModal = () => {
+    if (saving || preparingPhoto) return;
+    if (hasUnsavedChanges) {
+      setDiscardPromptOpen(true);
+      return;
+    }
+    forceCloseModal();
+  };
+
+  const forceCloseModal = () => {
+    setDiscardPromptOpen(false);
+    setModalOpen(false);
+    setModalError(null);
+    setEditingItem(null);
+    removeSessionKey(draftKey);
+    setDraft(makeEmptyWardrobeDraft(defaultVis));
+  };
 
   useEffect(() => {
     if (!modalOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setModalOpen(false);
+      if (e.key === 'Escape' && !discardPromptOpen) {
+        attemptCloseModal();
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [modalOpen]);
+  }, [modalOpen, discardPromptOpen, hasUnsavedChanges, saving, preparingPhoto]);
 
   const openAdd = () => {
     setEditingItem(null);
-    setName('');
-    setCategory('T-shirts');
-    setBrand('');
-    setColor('');
-    setSize('L');
-    setSeasons(['All-Season']);
-    setStyleTags(['Streetwear']);
-    setVisibility(userProfile?.defaultItemVisibility || 'public');
-    setFormLaundry('clean');
-    setDescription('');
-    setAltText('');
-    setRawPhotoUrl(null);
-    setCutoutPhotoUrl(null);
-    setUseCutout(false);
+    setModalError(null);
+    const fresh = makeEmptyWardrobeDraft(defaultVis);
+    setDraft(fresh);
     setModalOpen(true);
   };
 
   const openEdit = (item: ClothingItem) => {
     setEditingItem(item);
-    setName(item.name);
-    setCategory(item.category);
-    setBrand(item.brand);
-    setColor(item.color);
-    setSize(item.size);
-    setSeasons(item.seasons?.length ? item.seasons : ['All-Season']);
-    setStyleTags(item.styleTags || []);
-    setVisibility(item.visibility || 'public');
-    setFormLaundry(item.laundryStatus || 'clean');
-    setDescription(item.description || '');
-    setAltText(item.altText || buildAutoAltText(item));
-    setRawPhotoUrl(item.imageUrl || null);
-    setCutoutPhotoUrl(null);
-    setUseCutout(Boolean(item.isCutout));
+    setModalError(null);
+    setDraft({
+      step: 'details',
+      editingItemId: item.id,
+      rawPhotoUrl: null,
+      cropState: null,
+      croppedPhotoUrl: item.imageUrl || null,
+      cutoutPhotoUrl: null,
+      useCutout: Boolean(item.isCutout),
+      name: item.name,
+      category: item.category,
+      brand: item.brand,
+      color: item.color,
+      size: item.size,
+      seasons: item.seasons?.length ? item.seasons : ['All-Season'],
+      styleTags: item.styleTags || [],
+      visibility: item.visibility || 'public',
+      laundryStatus: item.laundryStatus || 'clean',
+      description: item.description || '',
+      altText: item.altText || buildAutoAltText(item),
+    });
     setModalOpen(true);
+  };
+
+  const processSelectedFile = async (file: File) => {
+    setModalError(null);
+    setPreparingPhoto(true);
+    try {
+      const compressedDataUrl = await preparePreviewDataUrl(file);
+      updateDraft((prev) => ({
+        ...prev,
+        step: 'editor',
+        rawPhotoUrl: compressedDataUrl,
+        cropState: createDefaultCropState('1:1'),
+        croppedPhotoUrl: null,
+        cutoutPhotoUrl: null,
+        useCutout: false,
+      }));
+    } catch (err: any) {
+      const msg = err?.message || 'Could not process selected photo.';
+      console.error('Wardrobe photo load error:', err);
+      setModalError(msg);
+      onToast(msg, 'error');
+    } finally {
+      setPreparingPhoto(false);
+    }
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
-    setCutoutPhotoUrl(null);
-    setUseCutout(false);
-    try {
-      const compressedDataUrl = await preparePreviewDataUrl(file);
-      setRawPhotoUrl(compressedDataUrl);
-    } catch (err: any) {
-      onToast(err?.message || 'Could not process image file.', 'error');
-    }
+    await processSelectedFile(file);
   };
 
   const resolveEditableDataUrl = async (src: string | null): Promise<string | null> => {
@@ -169,60 +294,73 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
     throw new Error(res.reason || 'Photo unavailable to process. Please re-upload.');
   };
 
-  const handleRemoveBg = async () => {
-    if (!rawPhotoUrl) return;
-    setBgProgress(10);
+  const handleOpenEditorFromDetails = async () => {
+    setModalError(null);
+    if (draft.rawPhotoUrl) {
+      updateDraft({ step: 'editor' });
+      return;
+    }
+    const existingSrc = draft.croppedPhotoUrl || editingItem?.imageUrl || null;
+    if (!existingSrc) {
+      updateDraft({ step: 'photo' });
+      return;
+    }
+
+    setResolvingForCrop(true);
     try {
-      const usableUrl = await resolveEditableDataUrl(rawPhotoUrl);
-      if (!usableUrl) return;
-      const res = await removeBackgroundClient(usableUrl, 36, setBgProgress);
-      setCutoutPhotoUrl(res.cutoutDataUrl);
-      setUseCutout(true);
-      onToast('Background removed! Compare original vs cutout.');
+      const resolved = await resolveEditableDataUrl(existingSrc);
+      if (!resolved) {
+        updateDraft({ step: 'photo' });
+        return;
+      }
+      updateDraft({
+        step: 'editor',
+        rawPhotoUrl: resolved,
+        cropState: draft.cropState || createDefaultCropState('1:1'),
+      });
     } catch (err: any) {
-      onToast(err?.message || 'Could not remove background; keeping original.', 'error');
+      const msg = err?.message || 'Could not load image for cropping.';
+      console.error('Failed to open crop editor:', err);
+      setModalError(msg);
+      onToast(msg, 'error');
     } finally {
-      setBgProgress(null);
+      setResolvingForCrop(false);
     }
   };
 
-  const handleAIAutoTag = async () => {
-    const img = useCutout && cutoutPhotoUrl ? cutoutPhotoUrl : rawPhotoUrl;
-    if (!img) {
-      onToast('Upload a garment photo first to auto-tag.', 'error');
-      return;
-    }
-    setAutoTagging(true);
+  const handleRemoveBg = async () => {
+    const source = draft.croppedPhotoUrl || draft.rawPhotoUrl;
+    if (!source) return;
+    setModalError(null);
+    setBgProgress(10);
     try {
-      const usableImg = await resolveEditableDataUrl(img);
-      if (!usableImg) {
-        onToast('Upload a garment photo first to auto-tag.', 'error');
-        return;
-      }
-      const mime = usableImg.startsWith('data:image/webp') ? 'image/webp' : 'image/jpeg';
-      const tags = await autoTagGarmentPhoto(usableImg, mime);
-      if (tags.name) setName(tags.name);
-      if (tags.category && CLOTHING_CATEGORIES.includes(tags.category)) setCategory(tags.category);
-      if (tags.color) setColor(tags.color);
-      if (Array.isArray(tags.styleTags) && tags.styleTags.length > 0) setStyleTags(tags.styleTags);
-      if (Array.isArray(tags.seasons) && tags.seasons.length > 0) {
-        setSeasons(tags.seasons.filter((s) => ALL_SEASONS.includes(s)));
-      }
-      if (tags.altText) setAltText(tags.altText);
-      if (tags.description) setDescription(tags.description);
-      onToast('SWOOOSH AI tagged this garment.');
+      const usableUrl = await resolveEditableDataUrl(source);
+      if (!usableUrl) return;
+      const res = await removeBackgroundClient(usableUrl, 36, setBgProgress);
+      updateDraft({
+        cutoutPhotoUrl: res.cutoutDataUrl,
+        useCutout: true,
+      });
+      onToast('Background removed! Compare original vs cutout.');
     } catch (err: any) {
-      onToast(err?.message || 'Auto-tagging failed.', 'error');
+      const msg = err?.message || 'Could not remove background; keeping original.';
+      console.error('Background removal error:', err);
+      setModalError(msg);
+      onToast(msg, 'error');
     } finally {
-      setAutoTagging(false);
+      setBgProgress(null);
     }
   };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!userProfile) return;
-    if (!name.trim()) {
-      onToast('Garment name is required.', 'error');
+    setModalError(null);
+
+    if (!draft.name.trim()) {
+      const msg = 'Garment name is required.';
+      setModalError(msg);
+      onToast(msg, 'error');
       return;
     }
 
@@ -232,63 +370,78 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
       let thumbUrl = editingItem?.thumbUrl;
       let mediaId = editingItem?.mediaId;
 
-      const activeImg = useCutout && cutoutPhotoUrl ? cutoutPhotoUrl : rawPhotoUrl;
+      const activeImg =
+        draft.useCutout && draft.cutoutPhotoUrl
+          ? draft.cutoutPhotoUrl
+          : draft.croppedPhotoUrl || draft.rawPhotoUrl;
+
       if (!activeImg) {
         imageUrl = undefined;
         thumbUrl = undefined;
         mediaId = undefined;
       } else if (activeImg.startsWith('data:')) {
-        const uploaded = await uploadImageAsset(activeImg, userProfile.uid, visibility, isDemoMode);
+        const uploaded = await uploadImageAsset(activeImg, userProfile.uid, draft.visibility, isDemoMode);
         imageUrl = uploaded.imageUrl;
         thumbUrl = uploaded.thumbUrl;
         mediaId = uploaded.mediaId;
       }
 
-      const finalAlt = altText.trim() || buildAutoAltText({ color, brand, name, category });
+      const finalAlt =
+        draft.altText.trim() ||
+        buildAutoAltText({
+          color: draft.color,
+          brand: draft.brand,
+          name: draft.name,
+          category: draft.category,
+        });
 
       if (editingItem) {
         await editClothing(editingItem.id, {
-          name: name.trim(),
-          category,
-          brand: brand.trim() || 'Unbranded',
-          color: color.trim() || 'Neutral',
-          size: size.trim() || 'M',
-          seasons,
-          styleTags,
-          visibility,
-          laundryStatus,
-          description: description.trim(),
+          name: draft.name.trim(),
+          category: draft.category,
+          brand: draft.brand.trim() || 'Unbranded',
+          color: draft.color.trim() || 'Neutral',
+          size: draft.size.trim() || 'M',
+          seasons: draft.seasons,
+          styleTags: draft.styleTags,
+          visibility: draft.visibility,
+          laundryStatus: draft.laundryStatus,
+          description: draft.description.trim(),
           altText: finalAlt,
           imageUrl,
           thumbUrl,
           mediaId,
-          isCutout: useCutout,
+          isCutout: draft.useCutout,
         });
         onToast('Garment updated.');
       } else {
         await addClothing({
-          name: name.trim(),
-          category,
-          brand: brand.trim() || 'Unbranded',
-          color: color.trim() || 'Neutral',
-          size: size.trim() || 'M',
-          seasons,
-          styleTags,
-          visibility,
-          laundryStatus,
-          description: description.trim(),
+          name: draft.name.trim(),
+          category: draft.category,
+          brand: draft.brand.trim() || 'Unbranded',
+          color: draft.color.trim() || 'Neutral',
+          size: draft.size.trim() || 'M',
+          seasons: draft.seasons,
+          styleTags: draft.styleTags,
+          visibility: draft.visibility,
+          laundryStatus: draft.laundryStatus,
+          description: draft.description.trim(),
           altText: finalAlt,
           imageUrl,
           thumbUrl,
           mediaId,
-          isCutout: useCutout,
+          isCutout: draft.useCutout,
           wearCount: 0,
         });
         onToast('Added to My Wardrobe.');
       }
-      setModalOpen(false);
+
+      forceCloseModal();
     } catch (err: any) {
-      onToast(err?.message || 'Failed to save garment.', 'error');
+      const msg = err?.message || 'Failed to save garment. Your draft is still here.';
+      console.error('Failed saving wardrobe item:', err);
+      setModalError(msg);
+      onToast(msg, 'error');
     } finally {
       setSaving(false);
     }
@@ -319,10 +472,15 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
   };
 
   const handleBulkClean = async () => {
-    const ids = Array.from(selectedIds);
-    await markManyClean(ids);
-    setSelectedIds(new Set());
-    onToast(`Marked ${ids.length} item${ids.length === 1 ? '' : 's'} as Clean.`);
+    try {
+      const ids = Array.from(selectedIds);
+      await markManyClean(ids);
+      setSelectedIds(new Set());
+      onToast(`Marked ${ids.length} item${ids.length === 1 ? '' : 's'} as Clean.`);
+    } catch (err: any) {
+      console.error('Bulk clean failed:', err);
+      onToast(err?.message || 'Could not update laundry status.', 'error');
+    }
   };
 
   const dirtyCount = wardrobe.filter((w) => w.laundryStatus === 'dirty').length;
@@ -334,10 +492,22 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
 
     const config =
       item.laundryStatus === 'dirty'
-        ? { label: 'Dirty', Icon: AlertCircle, cls: 'border-amber-600/50 bg-amber-500/15 text-amber-800 dark:text-amber-300' }
+        ? {
+            label: 'Dirty',
+            Icon: AlertCircle,
+            cls: 'border-amber-600/50 bg-amber-500/15 text-amber-800 dark:text-amber-300',
+          }
         : item.laundryStatus === 'washing'
-        ? { label: 'In the wash', Icon: Droplets, cls: 'border-sky-600/50 bg-sky-500/15 text-sky-800 dark:text-sky-300' }
-        : { label: 'Clean', Icon: CheckCircle2, cls: 'border-emerald-600/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300' };
+        ? {
+            label: 'In the wash',
+            Icon: Droplets,
+            cls: 'border-sky-600/50 bg-sky-500/15 text-sky-800 dark:text-sky-300',
+          }
+        : {
+            label: 'Clean',
+            Icon: CheckCircle2,
+            cls: 'border-emerald-600/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300',
+          };
 
     const Icon = config.Icon;
     return (
@@ -353,7 +523,19 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
     );
   };
 
-  const previewImg = useCutout && cutoutPhotoUrl ? cutoutPhotoUrl : rawPhotoUrl;
+  const previewImg =
+    draft.useCutout && draft.cutoutPhotoUrl
+      ? draft.cutoutPhotoUrl
+      : draft.croppedPhotoUrl || draft.rawPhotoUrl;
+
+  const stepLabel =
+    draft.step === 'photo'
+      ? 'Step 1 of 3 · Photo'
+      : draft.step === 'editor'
+      ? 'Step 2 of 3 · Edit Photo'
+      : editingItem
+      ? 'Edit Garment'
+      : 'Step 3 of 3 · Garment Details';
 
   return (
     <div className="space-y-6">
@@ -371,7 +553,7 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
             <button
               type="button"
               onClick={handleBulkClean}
-              className="px-4 py-2.5 rounded-full border border-[#171717] dark:border-[#e5e1da] text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+              className="px-4 py-2.5 min-h-[44px] rounded-full border border-[#171717] dark:border-[#e5e1da] text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
             >
               <CheckCircle2 className="w-4 h-4" />
               <span>Mark {selectedIds.size} Clean</span>
@@ -380,7 +562,7 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
           <button
             type="button"
             onClick={openAdd}
-            className="px-5 py-2.5 rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-semibold flex items-center gap-2 hover:opacity-90 cursor-pointer"
+            className="px-5 py-2.5 min-h-[44px] rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-semibold flex items-center gap-2 hover:opacity-90 cursor-pointer"
           >
             <Plus className="w-4 h-4" />
             <span>Add Garment</span>
@@ -519,10 +701,11 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
                         <button
                           type="button"
                           onClick={() => onSharePiece(item)}
-                          title="Share piece to feed"
-                          className="p-2 rounded-control hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer"
+                          title="Post this garment to the feed"
+                          className="px-2.5 py-1.5 rounded-control hover:bg-[#eae7e0] dark:hover:bg-[#303030] text-xs font-medium flex items-center gap-1 cursor-pointer"
                         >
                           <Share2 className="w-3.5 h-3.5" />
+                          <span>Post this</span>
                         </button>
                       )}
                       <button
@@ -536,8 +719,13 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
                       <button
                         type="button"
                         onClick={async () => {
-                          await removeClothing(item);
-                          onToast('Removed from wardrobe.');
+                          try {
+                            await removeClothing(item);
+                            onToast('Removed from wardrobe.');
+                          } catch (err: any) {
+                            console.error('Delete wardrobe item error:', err);
+                            onToast(err?.message || 'Could not remove garment.', 'error');
+                          }
                         }}
                         aria-label={`Delete ${item.name}`}
                         className="p-2 rounded-control hover:bg-red-500/15 text-red-600 dark:text-red-400 cursor-pointer"
@@ -553,328 +741,516 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
         </div>
       )}
 
-      {/* Add / Edit Garment Modal */}
+      {/* Multi-Step Add / Edit Garment Modal */}
       {modalOpen && (
         <div
           className="fixed inset-0 z-50 bg-black/65 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
           role="dialog"
           aria-modal="true"
           aria-labelledby="wardrobe-modal-title"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) attemptCloseModal();
+          }}
         >
           <div className="w-full max-w-xl rounded-modal bg-[#f5f4f0] dark:bg-[#242424] border border-[#d4cfc5] dark:border-[#404040] shadow-2xl overflow-hidden my-auto">
             <div className="px-6 py-4 border-b border-[#d4cfc5] dark:border-[#404040] flex items-center justify-between">
-              <h2 id="wardrobe-modal-title" className="font-display font-bold text-lg">
-                {editingItem ? 'Edit Garment' : 'Add Garment'}
-              </h2>
+              <div>
+                <h2 id="wardrobe-modal-title" className="font-display font-bold text-lg">
+                  {editingItem ? 'Edit Garment' : 'Add Garment'}
+                </h2>
+                <p className="text-[11px] font-mono-num uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8]">
+                  {stepLabel}
+                </p>
+              </div>
               <button
                 type="button"
-                onClick={() => setModalOpen(false)}
+                onClick={attemptCloseModal}
                 aria-label="Close modal"
-                className="p-2 rounded-control hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer"
+                className="w-10 h-10 rounded-control flex items-center justify-center hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <form onSubmit={handleSave} className="p-6 space-y-4 max-h-[82vh] overflow-y-auto">
-              {/* Photo Upload + Background Removal + AI Auto-Tag */}
-              <div className="space-y-2.5">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8]">
-                    Garment Photo
-                  </label>
-                  <div className="flex items-center gap-2">
-                    {rawPhotoUrl && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={handleRemoveBg}
-                          disabled={bgProgress !== null}
-                          className="px-2.5 py-1 rounded-chip border border-[#d4cfc5] dark:border-[#404040] text-[11px] font-medium flex items-center gap-1 hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer"
-                        >
-                          <Scissors className="w-3 h-3" />
-                          <span>
-                            {bgProgress !== null ? `Removing (${bgProgress}%)` : 'Remove background'}
-                          </span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleAIAutoTag}
-                          disabled={autoTagging}
-                          className="px-2.5 py-1 rounded-chip bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-[11px] font-semibold flex items-center gap-1 cursor-pointer disabled:opacity-60"
-                        >
-                          {autoTagging ? (
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                          ) : (
-                            <Sparkles className="w-3 h-3" />
-                          )}
-                          <span>{autoTagging ? 'Tagging...' : 'AI Auto-Tag'}</span>
-                        </button>
-                      </>
-                    )}
+            <ErrorBoundary title="Wardrobe editor ran into an issue" onReset={() => setModalError(null)}>
+              <div className="p-6 max-h-[82vh] overflow-y-auto space-y-4">
+                {modalError && (
+                  <div
+                    role="alert"
+                    className="p-3 rounded-control border border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300 text-xs flex items-start gap-2"
+                  >
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>{modalError}</span>
                   </div>
-                </div>
+                )}
 
-                {previewImg ? (
-                  <div className="space-y-2">
-                    <div className="relative h-48 rounded-card overflow-hidden border border-[#d4cfc5] dark:border-[#404040] bg-[#eae7e0] dark:bg-[#171717]">
-                      <GarmentImage src={previewImg} mediaId={editingItem?.mediaId} alt="Garment preview" isCutout={useCutout} />
+                {/* STEP 1: Pick or Capture Photo */}
+                {draft.step === 'photo' && (
+                  <div className="space-y-4 py-2">
+                    <div className="rounded-card border border-dashed border-[#a5a5a5] bg-white dark:bg-[#171717] p-6 text-center space-y-4">
+                      {preparingPhoto ? (
+                        <div className="py-6 flex flex-col items-center gap-2 text-xs font-semibold">
+                          <Loader2 className="w-6 h-6 animate-spin" />
+                          <span>Preparing photo for editor...</span>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="space-y-1">
+                            <p className="font-display font-bold text-base">Choose a garment photo</p>
+                            <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8]">
+                              Take a photo or pick one from your device. Next you&rsquo;ll crop &amp; frame it, then add details.
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap items-center justify-center gap-2.5">
+                            <label className="inline-flex items-center gap-2 px-4 py-2.5 min-h-[44px] rounded-control bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-bold cursor-pointer hover:opacity-90">
+                              <Camera className="w-4 h-4" />
+                              <span>Take Photo</span>
+                              <input
+                                type="file"
+                                accept="image/*"
+                                capture="environment"
+                                onChange={handleFileChange}
+                                className="sr-only"
+                              />
+                            </label>
+                            <label className="inline-flex items-center gap-2 px-4 py-2.5 min-h-[44px] rounded-control border border-[#d4cfc5] dark:border-[#404040] bg-[#f5f4f0] dark:bg-[#242424] text-xs font-semibold cursor-pointer hover:bg-[#eae7e0] dark:hover:bg-[#303030]">
+                              <Upload className="w-4 h-4" />
+                              <span>Upload Photo</span>
+                              <input
+                                type="file"
+                                accept="image/*"
+                                onChange={handleFileChange}
+                                className="sr-only"
+                              />
+                            </label>
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-between pt-2">
                       <button
                         type="button"
-                        onClick={() => {
-                          setRawPhotoUrl(null);
-                          setCutoutPhotoUrl(null);
-                          setUseCutout(false);
-                        }}
-                        aria-label="Clear photo"
-                        className="absolute top-2 right-2 p-1.5 rounded-full bg-black/70 text-white cursor-pointer"
+                        onClick={attemptCloseModal}
+                        className="px-4 py-2.5 min-h-[44px] rounded-control border border-[#d4cfc5] dark:border-[#404040] text-xs font-semibold cursor-pointer"
                       >
-                        <X className="w-3.5 h-3.5" />
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => updateDraft({ step: 'details' })}
+                        className="text-xs font-semibold underline text-[#4e4c46] dark:text-[#c2bfb8] hover:text-[#171717] dark:hover:text-[#e5e1da] min-h-[44px] px-2 cursor-pointer"
+                      >
+                        Skip photo &amp; enter details
                       </button>
                     </div>
-                    {cutoutPhotoUrl && (
-                      <div className="flex items-center gap-2 text-xs">
+                  </div>
+                )}
+
+                {/* STEP 2: Interactive Photo Editor (Zoom, Drag, Done -> Details) */}
+                {draft.step === 'editor' && draft.rawPhotoUrl && (
+                  <PhotoCropEditor
+                    sourceUrl={draft.rawPhotoUrl}
+                    initialCrop={draft.cropState}
+                    defaultAspect={'1:1' as CropAspectKey}
+                    allowAspectSwitch={false}
+                    title="Crop & Frame Garment"
+                    subtitle="Drag to center your garment, adjust zoom, then tap Done to add details."
+                    backLabel={editingItem ? 'Back to Details' : 'Back'}
+                    doneLabel="Done"
+                    onBack={() =>
+                      updateDraft({
+                        step: editingItem || draft.croppedPhotoUrl ? 'details' : 'photo',
+                      })
+                    }
+                    onChangePhotoFile={processSelectedFile}
+                    onDone={({ croppedDataUrl, cropState }) => {
+                      updateDraft((prev) => ({
+                        ...prev,
+                        step: 'details',
+                        croppedPhotoUrl: croppedDataUrl,
+                        cropState,
+                        cutoutPhotoUrl: null,
+                        useCutout: false,
+                      }));
+                    }}
+                  />
+                )}
+
+                {/* STEP 3: Garment Details Screen + Save item */}
+                {draft.step === 'details' && (
+                  <form onSubmit={handleSave} className="space-y-4">
+                    {/* Cropped Photo Summary + Back to Editor + Background Cutout */}
+                    <div className="space-y-2.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <label className="text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8]">
+                          Garment Photo
+                        </label>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {previewImg && (
+                            <button
+                              type="button"
+                              onClick={handleOpenEditorFromDetails}
+                              disabled={resolvingForCrop}
+                              className="px-2.5 py-1.5 min-h-[34px] rounded-chip border border-[#d4cfc5] dark:border-[#404040] text-[11px] font-medium inline-flex items-center gap-1 hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer"
+                            >
+                              {resolvingForCrop ? (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              ) : (
+                                <Crop className="w-3 h-3" />
+                              )}
+                              <span>Edit Crop</span>
+                            </button>
+                          )}
+                          {previewImg && (
+                            <button
+                              type="button"
+                              onClick={handleRemoveBg}
+                              disabled={bgProgress !== null}
+                              className="px-2.5 py-1.5 min-h-[34px] rounded-chip border border-[#d4cfc5] dark:border-[#404040] text-[11px] font-medium inline-flex items-center gap-1 hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer"
+                            >
+                              <Scissors className="w-3 h-3" />
+                              <span>
+                                {bgProgress !== null ? `Removing (${bgProgress}%)` : 'Remove background'}
+                              </span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {previewImg ? (
+                        <div className="space-y-2">
+                          <div className="relative h-48 rounded-card overflow-hidden border border-[#d4cfc5] dark:border-[#404040] bg-[#eae7e0] dark:bg-[#171717]">
+                            <GarmentImage
+                              src={previewImg}
+                              mediaId={editingItem?.mediaId}
+                              alt="Garment preview"
+                              isCutout={draft.useCutout}
+                            />
+                            <button
+                              type="button"
+                              onClick={() =>
+                                updateDraft({
+                                  rawPhotoUrl: null,
+                                  cropState: null,
+                                  croppedPhotoUrl: null,
+                                  cutoutPhotoUrl: null,
+                                  useCutout: false,
+                                })
+                              }
+                              aria-label="Clear photo"
+                              className="absolute top-2 right-2 p-1.5 rounded-full bg-black/70 text-white cursor-pointer"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+
+                          {draft.cutoutPhotoUrl && (
+                            <div className="flex items-center gap-2 text-xs">
+                              <button
+                                type="button"
+                                onClick={() => updateDraft({ useCutout: false })}
+                                className={`px-3 py-1.5 rounded-chip border cursor-pointer ${
+                                  !draft.useCutout
+                                    ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717]'
+                                    : 'border-[#d4cfc5] dark:border-[#404040]'
+                                }`}
+                              >
+                                Keep Original
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => updateDraft({ useCutout: true })}
+                                className={`px-3 py-1.5 rounded-chip border cursor-pointer ${
+                                  draft.useCutout
+                                    ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717]'
+                                    : 'border-[#d4cfc5] dark:border-[#404040]'
+                                }`}
+                              >
+                                Use Cutout
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="flex flex-wrap gap-2">
+                          <label className="flex-1 min-w-[140px] flex items-center justify-center gap-2 p-3.5 min-h-[44px] rounded-control border border-dashed border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#171717] cursor-pointer text-xs font-semibold">
+                            <Camera className="w-4 h-4" />
+                            <span>Take Photo</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              capture="environment"
+                              onChange={handleFileChange}
+                              className="sr-only"
+                            />
+                          </label>
+                          <label className="flex-1 min-w-[140px] flex items-center justify-center gap-2 p-3.5 min-h-[44px] rounded-control border border-dashed border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#171717] cursor-pointer text-xs font-semibold">
+                            <Upload className="w-4 h-4" />
+                            <span>Upload Photo</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={handleFileChange}
+                              className="sr-only"
+                            />
+                          </label>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1">
+                          Garment Name *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={draft.name}
+                          onChange={(e) => updateDraft({ name: e.target.value })}
+                          placeholder="Boxy Heavyweight Tee"
+                          className="w-full px-3 py-2 min-h-[42px] rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1">
+                          Brand
+                        </label>
+                        <input
+                          type="text"
+                          value={draft.brand}
+                          onChange={(e) => updateDraft({ brand: e.target.value })}
+                          placeholder="Entire Studios"
+                          className="w-full px-3 py-2 min-h-[42px] rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1">
+                          Category
+                        </label>
+                        <select
+                          value={draft.category}
+                          onChange={(e) => updateDraft({ category: e.target.value as ClothingCategory })}
+                          className="w-full px-3 py-2 min-h-[42px] rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+                        >
+                          {CLOTHING_CATEGORIES.map((c) => (
+                            <option key={c} value={c}>
+                              {c}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1">
+                            Color
+                          </label>
+                          <input
+                            type="text"
+                            value={draft.color}
+                            onChange={(e) => updateDraft({ color: e.target.value })}
+                            placeholder="Charcoal"
+                            className="w-full px-3 py-2 min-h-[42px] rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1">
+                            Size
+                          </label>
+                          <input
+                            type="text"
+                            value={draft.size}
+                            onChange={(e) => updateDraft({ size: e.target.value })}
+                            placeholder="L"
+                            className="w-full px-3 py-2 min-h-[42px] rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Seasons & Style Tags */}
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1.5">
+                        Seasons
+                      </label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {SEASON_TAGS.map((s) => {
+                          const active = draft.seasons.includes(s);
+                          return (
+                            <button
+                              key={s}
+                              type="button"
+                              onClick={() =>
+                                updateDraft((prev) => ({
+                                  ...prev,
+                                  seasons: prev.seasons.includes(s)
+                                    ? prev.seasons.length > 1
+                                      ? prev.seasons.filter((x) => x !== s)
+                                      : prev.seasons
+                                    : [...prev.seasons, s],
+                                }))
+                              }
+                              className={`px-2.5 py-1 rounded-chip text-xs border cursor-pointer ${
+                                active
+                                  ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-transparent'
+                                  : 'border-[#d4cfc5] dark:border-[#404040]'
+                              }`}
+                            >
+                              {s}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1.5">
+                        Style Tags
+                      </label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {STYLE_CATEGORIES.map((tag) => {
+                          const active = draft.styleTags.includes(tag);
+                          return (
+                            <button
+                              key={tag}
+                              type="button"
+                              onClick={() =>
+                                updateDraft((prev) => ({
+                                  ...prev,
+                                  styleTags: prev.styleTags.includes(tag)
+                                    ? prev.styleTags.filter((x) => x !== tag)
+                                    : [...prev.styleTags, tag],
+                                }))
+                              }
+                              className={`px-2.5 py-1 rounded-chip text-xs border cursor-pointer ${
+                                active
+                                  ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-transparent'
+                                  : 'border-[#d4cfc5] dark:border-[#404040]'
+                              }`}
+                            >
+                              {tag}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Visibility & Laundry */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1">
+                          Visibility
+                        </label>
+                        <select
+                          value={draft.visibility}
+                          onChange={(e) => updateDraft({ visibility: e.target.value as Visibility })}
+                          className="w-full px-3 py-2 min-h-[42px] rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+                        >
+                          <option value="public">Public (Visible on profile & lookbooks)</option>
+                          <option value="friends">Friends only</option>
+                          <option value="followers">Followers only</option>
+                          <option value="private">Private (Hidden from others)</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1">
+                          Laundry Status (Always Private)
+                        </label>
+                        <select
+                          value={draft.laundryStatus}
+                          onChange={(e) => updateDraft({ laundryStatus: e.target.value as LaundryStatus })}
+                          className="w-full px-3 py-2 min-h-[42px] rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+                        >
+                          <option value="clean">Clean</option>
+                          <option value="dirty">Dirty</option>
+                          <option value="washing">In the wash</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1">
+                        Image Alt Text (Accessibility)
+                      </label>
+                      <input
+                        type="text"
+                        value={draft.altText}
+                        onChange={(e) => updateDraft({ altText: e.target.value })}
+                        placeholder={buildAutoAltText({
+                          color: draft.color,
+                          brand: draft.brand,
+                          name: draft.name,
+                          category: draft.category,
+                        })}
+                        className="w-full px-3 py-2 min-h-[42px] rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1">
+                        Fabric / Fit Notes
+                      </label>
+                      <textarea
+                        rows={2}
+                        value={draft.description}
+                        onChange={(e) => updateDraft({ description: e.target.value })}
+                        placeholder="Heavyweight 320gsm cotton, boxy shoulder drape..."
+                        className="w-full px-3 py-2 rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+                      />
+                    </div>
+
+                    <div className="pt-2 border-t border-[#d4cfc5] dark:border-[#404040] flex flex-wrap items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        disabled={saving || resolvingForCrop}
+                        onClick={() => {
+                          if (draft.rawPhotoUrl || draft.croppedPhotoUrl) {
+                            handleOpenEditorFromDetails();
+                          } else {
+                            updateDraft({ step: 'photo' });
+                          }
+                        }}
+                        className="px-3.5 py-2.5 min-h-[44px] rounded-control border border-[#d4cfc5] dark:border-[#404040] text-xs font-semibold inline-flex items-center gap-1.5 hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer"
+                      >
+                        <ArrowLeft className="w-3.5 h-3.5" />
+                        <span>{draft.rawPhotoUrl || draft.croppedPhotoUrl ? 'Back to Editor' : 'Back to Photo'}</span>
+                      </button>
+
+                      <div className="flex items-center gap-2 ml-auto">
                         <button
                           type="button"
-                          onClick={() => setUseCutout(false)}
-                          className={`px-3 py-1 rounded-chip border cursor-pointer ${
-                            !useCutout
-                              ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717]'
-                              : 'border-[#d4cfc5] dark:border-[#404040]'
-                          }`}
+                          onClick={attemptCloseModal}
+                          disabled={saving}
+                          className="px-4 py-2.5 min-h-[44px] rounded-control border border-[#d4cfc5] dark:border-[#404040] text-xs font-semibold cursor-pointer"
                         >
-                          Keep Original
+                          Cancel
                         </button>
                         <button
-                          type="button"
-                          onClick={() => setUseCutout(true)}
-                          className={`px-3 py-1 rounded-chip border cursor-pointer ${
-                            useCutout
-                              ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717]'
-                              : 'border-[#d4cfc5] dark:border-[#404040]'
-                          }`}
+                          type="submit"
+                          disabled={saving}
+                          className="px-5 py-2.5 min-h-[44px] rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                         >
-                          Use Cutout
+                          {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                          <span>{saving ? 'Saving...' : editingItem ? 'Save Changes' : 'Save item'}</span>
                         </button>
                       </div>
-                    )}
-                  </div>
-                ) : (
-                  <label className="flex flex-col items-center justify-center p-5 rounded-card border border-dashed border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#171717] cursor-pointer">
-                    <Upload className="w-5 h-5 mb-1.5 opacity-70" />
-                    <span className="text-xs font-medium">Upload photo (WebP compressed in-browser)</span>
-                    <input type="file" accept="image/*" onChange={handleFileChange} className="sr-only" />
-                  </label>
+                    </div>
+                  </form>
                 )}
               </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1">
-                    Garment Name *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="Boxy Heavyweight Tee"
-                    className="w-full px-3 py-2 rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1">
-                    Brand
-                  </label>
-                  <input
-                    type="text"
-                    value={brand}
-                    onChange={(e) => setBrand(e.target.value)}
-                    placeholder="Entire Studios"
-                    className="w-full px-3 py-2 rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1">
-                    Category
-                  </label>
-                  <select
-                    value={category}
-                    onChange={(e) => setCategory(e.target.value as ClothingCategory)}
-                    className="w-full px-3 py-2 rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
-                  >
-                    {CLOTHING_CATEGORIES.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1">
-                      Color
-                    </label>
-                    <input
-                      type="text"
-                      value={color}
-                      onChange={(e) => setColor(e.target.value)}
-                      placeholder="Charcoal"
-                      className="w-full px-3 py-2 rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1">
-                      Size
-                    </label>
-                    <input
-                      type="text"
-                      value={size}
-                      onChange={(e) => setSize(e.target.value)}
-                      placeholder="L"
-                      className="w-full px-3 py-2 rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Seasons & Style Tags */}
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1.5">
-                  Seasons
-                </label>
-                <div className="flex flex-wrap gap-1.5">
-                  {SEASON_TAGS.map((s) => {
-                    const active = seasons.includes(s);
-                    return (
-                      <button
-                        key={s}
-                        type="button"
-                        onClick={() =>
-                          setSeasons((prev) =>
-                            prev.includes(s) ? (prev.length > 1 ? prev.filter((x) => x !== s) : prev) : [...prev, s]
-                          )
-                        }
-                        className={`px-2.5 py-1 rounded-chip text-xs border cursor-pointer ${
-                          active
-                            ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-transparent'
-                            : 'border-[#d4cfc5] dark:border-[#404040]'
-                        }`}
-                      >
-                        {s}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1.5">
-                  Style Tags
-                </label>
-                <div className="flex flex-wrap gap-1.5">
-                  {STYLE_CATEGORIES.map((tag) => {
-                    const active = styleTags.includes(tag);
-                    return (
-                      <button
-                        key={tag}
-                        type="button"
-                        onClick={() =>
-                          setStyleTags((prev) =>
-                            prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]
-                          )
-                        }
-                        className={`px-2.5 py-1 rounded-chip text-xs border cursor-pointer ${
-                          active
-                            ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-transparent'
-                            : 'border-[#d4cfc5] dark:border-[#404040]'
-                        }`}
-                      >
-                        {tag}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Visibility & Laundry */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1">
-                    Visibility
-                  </label>
-                  <select
-                    value={visibility}
-                    onChange={(e) => setVisibility(e.target.value as Visibility)}
-                    className="w-full px-3 py-2 rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
-                  >
-                    <option value="public">Public (Visible on profile & lookbooks)</option>
-                    <option value="followers">Followers only</option>
-                    <option value="private">Private (Hidden from others)</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1">
-                    Laundry Status (Always Private)
-                  </label>
-                  <select
-                    value={laundryStatus}
-                    onChange={(e) => setFormLaundry(e.target.value as LaundryStatus)}
-                    className="w-full px-3 py-2 rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
-                  >
-                    <option value="clean">Clean</option>
-                    <option value="dirty">Dirty</option>
-                    <option value="washing">In the wash</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1">
-                  Image Alt Text (Accessibility)
-                </label>
-                <input
-                  type="text"
-                  value={altText}
-                  onChange={(e) => setAltText(e.target.value)}
-                  placeholder={buildAutoAltText({ color, brand, name, category })}
-                  className="w-full px-3 py-2 rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1">
-                  Fabric / Fit Notes
-                </label>
-                <textarea
-                  rows={2}
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Heavyweight 320gsm cotton, boxy shoulder drape..."
-                  className="w-full px-3 py-2 rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
-                />
-              </div>
-
-              <div className="pt-2 flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setModalOpen(false)}
-                  className="px-4 py-2.5 rounded-control border border-[#d4cfc5] dark:border-[#404040] text-xs font-semibold cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="px-5 py-2.5 rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-semibold cursor-pointer disabled:opacity-50"
-                >
-                  {saving ? 'Saving...' : editingItem ? 'Save Changes' : 'Add to Wardrobe'}
-                </button>
-              </div>
-            </form>
+            </ErrorBoundary>
           </div>
         </div>
       )}
+
+      <DiscardDraftDialog
+        open={discardPromptOpen}
+        title={editingItem ? 'Discard garment changes?' : 'Discard this item?'}
+        description="You have unsaved garment details or a photo draft. Leaving now will discard them."
+        onKeep={() => setDiscardPromptOpen(false)}
+        onDiscard={forceCloseModal}
+      />
     </div>
   );
 };

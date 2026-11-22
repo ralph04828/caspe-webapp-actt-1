@@ -3,23 +3,28 @@ import { NavSection } from '../types';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useWardrobe } from '../context/WardrobeContext';
-import { Menu, Sun, Moon, RotateCcw, WifiOff } from 'lucide-react';
+import { useSocial } from '../context/SocialContext';
+import { Menu, Sun, Moon, RotateCcw, WifiOff, MessageCircle, Plus } from 'lucide-react';
 import { PWAInstallButton } from './PWAInstallButton';
 
 interface HeaderBarProps {
   activeSection: NavSection;
   onOpenMobileMenu: () => void;
+  onNavigate?: (section: NavSection) => void;
+  onOpenCreatePost?: () => void;
 }
 
 const SECTION_LABELS: Record<NavSection, string> = {
   home: 'Home Feed',
+  ootd: 'OOTD Spotlight',
+  people: 'People',
+  messages: 'Messages',
   explore: 'Explore',
   wardrobe: 'My Wardrobe',
   builder: 'Fit Builder',
   lookbook: 'My Lookbook',
   wishlist: 'Wishlist',
   planner: 'Outfit Planner',
-  ai: 'SWOOOSH AI',
   notifications: 'Notifications',
   profile: 'Profile & Style Stats',
   settings: 'Settings',
@@ -28,10 +33,13 @@ const SECTION_LABELS: Record<NavSection, string> = {
 export const HeaderBar: React.FC<HeaderBarProps> = ({
   activeSection,
   onOpenMobileMenu,
+  onNavigate,
+  onOpenCreatePost,
 }) => {
   const { theme, toggleTheme } = useTheme();
   const { isDemoMode, updateAccountProfile } = useAuth();
   const { resetDemoData, isOnline } = useWardrobe();
+  const { unreadMessagesCount } = useSocial();
 
   const handleToggleTheme = () => {
     const next = theme === 'dark' ? 'light' : 'dark';
@@ -46,7 +54,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
           type="button"
           onClick={onOpenMobileMenu}
           aria-label="Open navigation menu"
-          className="lg:hidden min-w-[44px] min-h-[40px] flex items-center justify-center rounded-control border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] cursor-pointer"
+          className="lg:hidden min-w-[44px] min-h-[44px] flex items-center justify-center rounded-control border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] cursor-pointer"
         >
           <Menu className="w-4 h-4" />
         </button>
@@ -89,13 +97,45 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
           </div>
         )}
 
+        {onOpenCreatePost && (
+          <button
+            type="button"
+            onClick={onOpenCreatePost}
+            aria-label="Create post"
+            className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer min-h-[40px]"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>Create</span>
+          </button>
+        )}
+
+        {onNavigate && (
+          <button
+            type="button"
+            onClick={() => onNavigate('messages')}
+            aria-label="Open messages"
+            className={`relative min-w-[40px] min-h-[40px] px-2.5 py-2 rounded-control border text-xs font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
+              activeSection === 'messages'
+                ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-transparent'
+                : 'border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] hover:bg-[#eae7e0] dark:hover:bg-[#303030]'
+            }`}
+          >
+            <MessageCircle className="w-4 h-4" />
+            {unreadMessagesCount > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono-num font-bold bg-red-600 text-white leading-none">
+                {unreadMessagesCount > 99 ? '99+' : unreadMessagesCount}
+              </span>
+            )}
+          </button>
+        )}
+
         <PWAInstallButton compact />
 
         <button
           type="button"
           onClick={handleToggleTheme}
           aria-label="Toggle dark and light mode"
-          className="flex items-center gap-2 px-3 py-2 rounded-control text-xs font-medium border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] hover:bg-[#eae7e0] dark:hover:bg-[#303030] transition-colors whitespace-nowrap shrink-0 cursor-pointer min-h-[38px]"
+          className="flex items-center gap-2 px-3 py-2 rounded-control text-xs font-medium border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] hover:bg-[#eae7e0] dark:hover:bg-[#303030] transition-colors whitespace-nowrap shrink-0 cursor-pointer min-h-[40px]"
         >
           {theme === 'dark' ? (
             <>

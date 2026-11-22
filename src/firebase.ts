@@ -18,6 +18,7 @@ try {
   firestoreInstance = initializeFirestore(
     app,
     {
+      ignoreUndefinedProperties: true,
       localCache: persistentLocalCache({
         tabManager: persistentMultipleTabManager(),
       }),
@@ -70,9 +71,32 @@ export interface FirestoreErrorInfo {
   };
 }
 
+export function assertOnlineForWrite(action = 'save your changes'): void {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    throw new Error(
+      `You appear to be offline and cannot ${action}. Your draft is still here — reconnect and try again.`
+    );
+  }
+}
+
+function formatFirestoreErrorMessage(rawMessage: string, path: string | null): string {
+  const lower = rawMessage.toLowerCase();
+  if (lower.includes('the client is offline') || lower.includes('network') || lower.includes('unavailable')) {
+    return 'Network connection unavailable. Check your internet connection and try again.';
+  }
+  if (lower.includes('permission') || lower.includes('insufficient permissions')) {
+    return `Permission denied while accessing ${path || 'data'}. Make sure you are signed in and have access.`;
+  }
+  if (lower.includes('unsupported field value')) {
+    return rawMessage;
+  }
+  return rawMessage || 'Could not complete request. Please try again.';
+}
+
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null): never {
+  const rawMessage = error instanceof Error ? error.message : String(error);
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+    error: rawMessage,
     authInfo: {
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,
@@ -88,6 +112,6 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     operationType,
     path,
   };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+  console.error('Firestore Error:', errInfo);
+  throw new Error(formatFirestoreErrorMessage(rawMessage, path));
 }

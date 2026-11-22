@@ -1,6 +1,7 @@
 import { doc, setDoc, deleteDoc, getDoc, updateDoc } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../firebase';
+import { assertOnlineForWrite, db, handleFirestoreError, OperationType } from '../firebase';
 import { MediaAsset, MediaChunk, Visibility } from '../types';
+import { cleanData } from '../utils/cleanData';
 
 export const MAX_INPUT_FILE_BYTES = 12 * 1024 * 1024; // 12 MB input file cap before browser compression
 export const MAX_FULL_DIMENSION = 1000;
@@ -396,7 +397,8 @@ export async function uploadImageAsset(
   fileOrDataUrl: File | string,
   userId: string,
   visibility: Visibility,
-  isDemo: boolean
+  isDemo: boolean,
+  scope?: { conversationId?: string }
 ): Promise<UploadedAsset> {
   if (!userId) {
     throw new Error('You must be signed in to upload images.');
@@ -411,6 +413,7 @@ export async function uploadImageAsset(
       id: mediaId,
       ownerId: userId,
       visibility,
+      ...(scope?.conversationId ? { conversationId: scope.conversationId } : {}),
       contentType: prepared.contentType,
       width: prepared.width,
       height: prepared.height,
@@ -437,6 +440,7 @@ export async function uploadImageAsset(
     id: mediaId,
     ownerId: userId,
     visibility,
+    ...(scope?.conversationId ? { conversationId: scope.conversationId } : {}),
     contentType: prepared.contentType,
     width: prepared.width,
     height: prepared.height,
@@ -451,10 +455,11 @@ export async function uploadImageAsset(
 
   const path = `media/${mediaId}`;
   try {
-    await setDoc(doc(db, 'media', mediaId), asset);
+    assertOnlineForWrite('upload this photo');
+    await setDoc(doc(db, 'media', mediaId), cleanData(asset));
     if (prepared.chunks.length > 0) {
       for (const chunk of prepared.chunks) {
-        await setDoc(doc(db, 'media', mediaId, 'chunks', String(chunk.index)), chunk);
+        await setDoc(doc(db, 'media', mediaId, 'chunks', String(chunk.index)), cleanData(chunk));
       }
     }
   } catch (error) {
@@ -620,10 +625,13 @@ export async function updateMediaVisibility(
 
   mediaCache.delete(mediaId);
   try {
-    await updateDoc(doc(db, 'media', mediaId), {
-      visibility,
-      updatedAt: new Date().toISOString(),
-    });
+    await updateDoc(
+      doc(db, 'media', mediaId),
+      cleanData({
+        visibility,
+        updatedAt: new Date().toISOString(),
+      })
+    );
   } catch (error) {
     console.warn('Could not sync media visibility:', error);
   }

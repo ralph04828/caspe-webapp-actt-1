@@ -2,7 +2,7 @@
   "entities": {
     "UserProfile": {
       "title": "UserProfile",
-      "description": "Public/private social profile and wardrobe preferences for a SWOOOSH member.",
+      "description": "Public-by-default social profile, online presence, onboarding status, and wardrobe preferences for a SWOOOSH member.",
       "type": "object",
       "properties": {
         "uid": { "type": "string" },
@@ -15,10 +15,19 @@
         "mediaId": { "type": "string" },
         "theme": { "type": "string", "enum": ["dark", "light"] },
         "isPublic": { "type": "boolean" },
-        "defaultItemVisibility": { "type": "string", "enum": ["public", "followers", "private"] },
-        "defaultOutfitVisibility": { "type": "string", "enum": ["public", "followers", "private"] },
+        "defaultItemVisibility": { "type": "string", "enum": ["public", "friends", "followers", "private"] },
+        "defaultOutfitVisibility": { "type": "string", "enum": ["public", "friends", "followers", "private"] },
         "autoDirtyOnWear": { "type": "boolean" },
         "isAdultConfirmed": { "type": "boolean" },
+        "onboardingCompleted": { "type": "boolean" },
+        "onboardingStep": { "type": "string" },
+        "pronouns": { "type": "string" },
+        "location": { "type": "string" },
+        "checklistDismissed": { "type": "boolean" },
+        "showOnlineStatus": { "type": "boolean" },
+        "onlineStatus": { "type": "boolean" },
+        "lastSeenAt": { "type": "string", "format": "date-time" },
+        "friendsCount": { "type": "integer" },
         "followersCount": { "type": "integer" },
         "followingCount": { "type": "integer" },
         "postsCount": { "type": "integer" },
@@ -26,14 +35,26 @@
       },
       "required": ["uid", "email", "displayName", "username", "usernameLower", "isPublic", "createdAt"]
     },
+    "UserPrivate": {
+      "title": "UserPrivate",
+      "description": "Strictly owner-only private data (such as optional birthday used solely to verify 13+).",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "birthday": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid"]
+    },
     "MediaAsset": {
       "title": "MediaAsset",
-      "description": "Compressed WebP image stored directly in Firestore (<1 MiB) with owner, visibility, dimensions, contentType, and optional subcollection chunking.",
+      "description": "Compressed WebP image stored directly in Firestore (<1 MiB) with owner, visibility, optional chat scope, dimensions, and optional subcollection chunking.",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
         "ownerId": { "type": "string" },
-        "visibility": { "type": "string", "enum": ["public", "followers", "private"] },
+        "visibility": { "type": "string", "enum": ["public", "friends", "followers", "private"] },
+        "conversationId": { "type": "string" },
         "contentType": { "type": "string", "enum": ["image/webp", "image/jpeg", "image/png"] },
         "width": { "type": "integer" },
         "height": { "type": "integer" },
@@ -71,7 +92,7 @@
         "brand": { "type": "string" },
         "color": { "type": "string" },
         "size": { "type": "string" },
-        "visibility": { "type": "string", "enum": ["public", "followers", "private"] },
+        "visibility": { "type": "string", "enum": ["public", "friends", "followers", "private"] },
         "laundryStatus": { "type": "string", "enum": ["clean", "dirty", "washing"] },
         "wearCount": { "type": "integer" },
         "createdAt": { "type": "string", "format": "date-time" }
@@ -87,7 +108,7 @@
         "userId": { "type": "string" },
         "name": { "type": "string" },
         "styleCategory": { "type": "string" },
-        "visibility": { "type": "string", "enum": ["public", "followers", "private"] },
+        "visibility": { "type": "string", "enum": ["public", "friends", "followers", "private"] },
         "allowRemix": { "type": "boolean" },
         "isFavorite": { "type": "boolean" },
         "createdAt": { "type": "string", "format": "date-time" }
@@ -96,15 +117,16 @@
     },
     "SocialPost": {
       "title": "SocialPost",
-      "description": "Fashion social feed post (outfit, piece, or ootd) with comment policy and remix metadata.",
+      "description": "Fashion social feed post (outfit, piece, or ootd) supporting up to 4 photos, inline edits, comment policy, and remix metadata.",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
         "userId": { "type": "string" },
         "postType": { "type": "string", "enum": ["outfit", "piece", "ootd"] },
         "caption": { "type": "string" },
-        "visibility": { "type": "string", "enum": ["public", "followers", "private"] },
-        "commentPolicy": { "type": "string", "enum": ["everyone", "followers", "off"] },
+        "visibility": { "type": "string", "enum": ["public", "friends", "followers", "private"] },
+        "commentPolicy": { "type": "string", "enum": ["everyone", "friends", "followers", "off"] },
+        "edited": { "type": "boolean" },
         "likesCount": { "type": "integer" },
         "commentsCount": { "type": "integer" },
         "createdAt": { "type": "string", "format": "date-time" }
@@ -113,7 +135,7 @@
     },
     "PostComment": {
       "title": "PostComment",
-      "description": "Comment on a social post with optional compressed image attachment reference.",
+      "description": "Comment on a social post with optional reply attribution and compressed image attachment reference.",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
@@ -124,6 +146,8 @@
         "authorName": { "type": "string" },
         "authorPhotoUrl": { "type": "string" },
         "text": { "type": "string" },
+        "replyToId": { "type": "string" },
+        "replyToUsername": { "type": "string" },
         "imageUrl": { "type": "string" },
         "thumbUrl": { "type": "string" },
         "mediaId": { "type": "string" },
@@ -131,6 +155,82 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "postId", "postAuthorId", "userId", "text", "createdAt"]
+    },
+    "FriendshipEdge": {
+      "title": "FriendshipEdge",
+      "description": "Mutual friendship and friend-request edge keyed deterministically as sorted uidA_uidB.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "users": { "type": "array" },
+        "requesterId": { "type": "string" },
+        "recipientId": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "accepted"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "users", "requesterId", "recipientId", "status", "createdAt"]
+    },
+    "MyDayStory": {
+      "title": "MyDayStory",
+      "description": "24-hour style story with public, friends, or close_friends visibility and automatic expiration timestamp.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "mediaUrl": { "type": "string" },
+        "altText": { "type": "string" },
+        "caption": { "type": "string" },
+        "styleTag": { "type": "string" },
+        "visibility": { "type": "string", "enum": ["public", "friends", "close_friends"] },
+        "closeFriendIds": { "type": "array" },
+        "viewCount": { "type": "integer" },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "mediaUrl", "altText", "visibility", "viewCount", "expiresAt", "createdAt"]
+    },
+    "StoryView": {
+      "title": "StoryView",
+      "description": "Viewer record for a MyDay story keyed as storyId_viewerId.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "storyId": { "type": "string" },
+        "storyOwnerId": { "type": "string" },
+        "viewerId": { "type": "string" },
+        "viewerUsername": { "type": "string" },
+        "viewedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "storyId", "storyOwnerId", "viewerId", "viewedAt"]
+    },
+    "ChatConversation": {
+      "title": "ChatConversation",
+      "description": "Friends-only direct message thread or group chat with typing indicators, unread counts, and read timestamps.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string", "enum": ["dm", "group"] },
+        "participantIds": { "type": "array" },
+        "createdBy": { "type": "string" },
+        "name": { "type": "string" },
+        "lastMessageText": { "type": "string" },
+        "lastMessageAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "type", "participantIds", "createdBy", "createdAt"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Message inside a DM or group chat conversation (max 1000 characters, optional image or shared post).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "conversationId": { "type": "string" },
+        "senderId": { "type": "string" },
+        "text": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "conversationId", "senderId", "createdAt"]
     },
     "WishlistItem": {
       "title": "WishlistItem",
@@ -142,7 +242,7 @@
         "name": { "type": "string" },
         "priority": { "type": "string", "enum": ["low", "medium", "high"] },
         "status": { "type": "string", "enum": ["wanted", "got_it"] },
-        "visibility": { "type": "string", "enum": ["public", "followers", "private"] },
+        "visibility": { "type": "string", "enum": ["public", "friends", "followers", "private"] },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "userId", "name", "priority", "status", "visibility", "createdAt"]
@@ -188,6 +288,7 @@
   },
   "firestore": {
     "/users/{userId}": { "schema": "UserProfile", "description": "Member profiles" },
+    "/userPrivate/{userId}": { "schema": "UserPrivate", "description": "Owner-only private user metadata (optional birthday)" },
     "/usernames/{usernameLower}": { "schema": "object", "description": "Unique lowercase username registry" },
     "/media/{mediaId}": { "schema": "MediaAsset", "description": "Compressed WebP image assets" },
     "/media/{mediaId}/chunks/{chunkId}": { "schema": "MediaChunk", "description": "Chunked image slices (<500KB per doc)" },
@@ -198,6 +299,11 @@
     "/postSaves/{saveId}": { "schema": "object", "description": "Saved/bookmarked posts" },
     "/comments/{commentId}": { "schema": "PostComment", "description": "Post comments with optional media attachments" },
     "/follows/{followId}": { "schema": "object", "description": "Follow and pending follow request edges" },
+    "/friendships/{friendshipId}": { "schema": "FriendshipEdge", "description": "Friendships & pending friend requests" },
+    "/stories/{storyId}": { "schema": "MyDayStory", "description": "24-hour MyDay style stories" },
+    "/storyViews/{viewId}": { "schema": "StoryView", "description": "Story view tracking records" },
+    "/conversations/{convId}": { "schema": "ChatConversation", "description": "Direct messages and group chat threads" },
+    "/conversations/{convId}/messages/{messageId}": { "schema": "ChatMessage", "description": "Messages inside DM or group chat" },
     "/notifications/{notifId}": { "schema": "object", "description": "User activity notifications" },
     "/userBlocks/{blockId}": { "schema": "object", "description": "Blocked user edges" },
     "/userMutes/{muteId}": { "schema": "object", "description": "Muted user edges" },
@@ -205,7 +311,6 @@
     "/wishlist/{wishId}": { "schema": "WishlistItem", "description": "Style wishlist (no prices)" },
     "/schedules/{scheduleId}": { "schema": "OutfitSchedule", "description": "Private outfit calendar" },
     "/wearLogs/{logId}": { "schema": "WearLog", "description": "Private wear history logs" },
-    "/shareLinks/{token}": { "schema": "ShareLink", "description": "Shareable lookbook/outfit links" },
-    "/aiQuotas/{quotaId}": { "schema": "object", "description": "Daily AI usage quota tracking" }
+    "/shareLinks/{token}": { "schema": "ShareLink", "description": "Shareable lookbook/outfit links" }
   }
 }

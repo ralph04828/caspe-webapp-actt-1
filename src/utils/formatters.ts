@@ -29,6 +29,15 @@ export function formatRelativeTime(isoString?: string): string {
   return formatShortDate(isoString);
 }
 
+export function formatTimeClock(isoString?: string): string {
+  if (!isoString) return '';
+  try {
+    return new Date(isoString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  } catch {
+    return '';
+  }
+}
+
 export function normalizeUsername(raw: string): string {
   return raw
     .trim()
@@ -58,26 +67,79 @@ export function extractMentions(text: string): string[] {
   return Array.from(new Set(matches.map((m) => m.slice(1).toLowerCase()))).slice(0, 12);
 }
 
+export function makeFriendshipId(uidA: string, uidB: string): string {
+  return uidA < uidB ? `${uidA}_${uidB}` : `${uidB}_${uidA}`;
+}
+
+export function makeDmConversationId(uidA: string, uidB: string): string {
+  return uidA < uidB ? `dm_${uidA}_${uidB}` : `dm_${uidB}_${uidA}`;
+}
+
+export function calculateAgeFromBirthday(birthdayStr: string): number | null {
+  if (!birthdayStr) return null;
+  const parts = birthdayStr.split('-').map(Number);
+  if (parts.length !== 3 || parts.some(Number.isNaN)) return null;
+  const [year, month, day] = parts;
+  const today = new Date();
+  let age = today.getFullYear() - year;
+  const monthDiff = today.getMonth() + 1 - month;
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < day)) {
+    age--;
+  }
+  return age;
+}
+
 const BLOCKED_TERMS = [
   'slur',
   'kill yourself',
   'kys',
   'hate speech',
+  'body shame',
+  'fatso',
+  'nude',
+  'nudes',
+  'porn',
+  'onlyfans',
 ];
 
-export function checkTextSafety(text: string): { ok: boolean; reason?: string } {
-  const lower = text.toLowerCase();
-  if (text.length > 1000) {
-    return { ok: false, reason: 'Text is too long (maximum 1,000 characters).' };
+const RECENT_MESSAGE_TIMESTAMPS = new Map<string, number[]>();
+
+export function checkTextSafety(text: string, maxChars = 1000): { ok: boolean; reason?: string } {
+  const trimmed = text.trim();
+  const lower = trimmed.toLowerCase();
+  if (trimmed.length > maxChars) {
+    return { ok: false, reason: `Message is too long (maximum ${maxChars} characters).` };
   }
   for (const term of BLOCKED_TERMS) {
     if (lower.includes(term)) {
       return {
         ok: false,
-        reason: 'Please keep SWOOOSH supportive and free from harassment or abusive language.',
+        reason: 'Please keep SWOOOSH supportive and free from harassment, body-shaming, nudity, or abusive language.',
       };
     }
   }
+  // Basic spam flood protection (20+ identical repeated chars or 4+ links)
+  if (/(.)\1{19,}/.test(trimmed)) {
+    return { ok: false, reason: 'Repeated character spam detected. Please edit your message.' };
+  }
+  const urlMatches = trimmed.match(/https?:\/\/\S+/gi) || [];
+  if (urlMatches.length >= 4) {
+    return { ok: false, reason: 'Too many links in a single message.' };
+  }
+  return { ok: true };
+}
+
+export function checkMessageRateLimit(uid: string, limitPerMin = 20): { ok: boolean; reason?: string } {
+  const now = Date.now();
+  const recent = (RECENT_MESSAGE_TIMESTAMPS.get(uid) || []).filter((ts) => now - ts < 60_000);
+  if (recent.length >= limitPerMin) {
+    return {
+      ok: false,
+      reason: `Slow down a bit—maximum ${limitPerMin} messages per minute.`,
+    };
+  }
+  recent.push(now);
+  RECENT_MESSAGE_TIMESTAMPS.set(uid, recent);
   return { ok: true };
 }
 
@@ -108,4 +170,17 @@ export function getSuggestedSeasonsForTemp(tempC?: number): SeasonTag[] {
   if (tempC <= 19) return ['Fall', 'Spring', 'All-Season'];
   if (tempC <= 26) return ['Spring', 'Summer', 'All-Season'];
   return ['Summer', 'All-Season'];
+}
+
+export function isStoryActive(expiresAt?: string): boolean {
+  if (!expiresAt) return false;
+  const ts = new Date(expiresAt).getTime();
+  return !Number.isNaN(ts) && ts > Date.now();
+}
+
+export function isUserRecentlyOnline(onlineStatus?: boolean, lastSeenAt?: string): boolean {
+  if (!onlineStatus || !lastSeenAt) return false;
+  const ts = new Date(lastSeenAt).getTime();
+  if (Number.isNaN(ts)) return false;
+  return Date.now() - ts < 3 * 60 * 1000;
 }

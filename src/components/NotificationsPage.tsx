@@ -1,4 +1,5 @@
 import React from 'react';
+import { NavSection } from '../types';
 import { useSocial } from '../context/SocialContext';
 import { formatRelativeTime } from '../utils/formatters';
 import { AvatarImage } from './AvatarImage';
@@ -16,21 +17,26 @@ import {
 
 interface NotificationsPageProps {
   onOpenProfile: (userId: string) => void;
+  onNavigate?: (section: NavSection) => void;
   onToast: (msg: string, type?: 'success' | 'error') => void;
 }
 
 export const NotificationsPage: React.FC<NotificationsPageProps> = ({
   onOpenProfile,
+  onNavigate,
   onToast,
 }) => {
   const {
     notifications,
     incomingFollows,
+    incomingFriendRequests,
     unreadNotificationsCount,
     markNotifRead,
     markAllNotifsRead,
     approveFollowRequest,
     declineFollowRequest,
+    acceptFriendRequest,
+    removeOrCancelFriend,
   } = useSocial();
 
   const pendingRequests = incomingFollows.filter((f) => f.status === 'pending');
@@ -40,6 +46,8 @@ export const NotificationsPage: React.FC<NotificationsPageProps> = ({
       case 'like':
         return Heart;
       case 'comment':
+      case 'message':
+      case 'story_reply':
         return MessageCircle;
       case 'remix':
         return Repeat;
@@ -56,7 +64,7 @@ export const NotificationsPage: React.FC<NotificationsPageProps> = ({
         <div>
           <h1 className="font-display text-2xl font-bold tracking-tight">Notifications</h1>
           <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8]">
-            Likes, comments, remixes, mentions, and follow requests.
+            Friend requests, replies, likes, comments, remixes, and mentions.
           </p>
         </div>
 
@@ -64,13 +72,73 @@ export const NotificationsPage: React.FC<NotificationsPageProps> = ({
           <button
             type="button"
             onClick={markAllNotifsRead}
-            className="px-3.5 py-2 rounded-control border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] text-xs font-semibold flex items-center gap-1.5 hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer"
+            className="px-3.5 py-2 min-h-[40px] rounded-control border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] text-xs font-semibold flex items-center gap-1.5 hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer"
           >
             <CheckCheck className="w-3.5 h-3.5" />
             <span>Mark all read</span>
           </button>
         )}
       </div>
+
+      {/* Pending Friend Requests */}
+      {incomingFriendRequests.length > 0 && (
+        <section className="p-4 rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] space-y-3">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8]">
+            Friend Requests ({incomingFriendRequests.length})
+          </h2>
+          <div className="space-y-2.5">
+            {incomingFriendRequests.map((req) => (
+              <div
+                key={req.id}
+                className="flex items-center justify-between gap-3 p-2.5 rounded-control bg-[#f5f4f0] dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+              >
+                <button
+                  type="button"
+                  onClick={() => onOpenProfile(req.requesterId)}
+                  className="flex items-center gap-2.5 min-w-0 text-left cursor-pointer"
+                >
+                  <AvatarImage
+                    src={req.requesterPhotoUrl}
+                    name={req.requesterName || req.requesterUsername}
+                    sizeClass="w-9 h-9"
+                    textSizeClass="text-xs"
+                  />
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold truncate">{req.requesterName}</p>
+                    <p className="text-[11px] text-[#4e4c46] dark:text-[#c2bfb8] truncate">
+                      @{req.requesterUsername}
+                    </p>
+                  </div>
+                </button>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await acceptFriendRequest(req);
+                      onToast(`You and @${req.requesterUsername} are now friends!`);
+                    }}
+                    className="px-3 py-1.5 min-h-[38px] rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    <span>Accept</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await removeOrCancelFriend(req);
+                      onToast('Friend request declined.');
+                    }}
+                    aria-label="Decline friend request"
+                    className="w-9 h-9 rounded-full border border-[#d4cfc5] dark:border-[#404040] flex items-center justify-center cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Pending Follow Requests */}
       {pendingRequests.length > 0 && (
@@ -109,7 +177,7 @@ export const NotificationsPage: React.FC<NotificationsPageProps> = ({
                       await approveFollowRequest(req);
                       onToast(`Accepted @${req.followerUsername}.`);
                     }}
-                    className="px-3 py-1.5 rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                    className="px-3 py-1.5 min-h-[38px] rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-semibold flex items-center gap-1 cursor-pointer"
                   >
                     <Check className="w-3.5 h-3.5" />
                     <span>Accept</span>
@@ -121,7 +189,7 @@ export const NotificationsPage: React.FC<NotificationsPageProps> = ({
                       onToast('Follow request declined.');
                     }}
                     aria-label="Decline follow request"
-                    className="p-1.5 rounded-full border border-[#d4cfc5] dark:border-[#404040] cursor-pointer"
+                    className="w-9 h-9 rounded-full border border-[#d4cfc5] dark:border-[#404040] flex items-center justify-center cursor-pointer"
                   >
                     <X className="w-3.5 h-3.5" />
                   </button>
@@ -147,8 +215,13 @@ export const NotificationsPage: React.FC<NotificationsPageProps> = ({
             return (
               <div
                 key={n.id}
-                onClick={() => !n.read && markNotifRead(n.id)}
-                className={`p-4 flex items-start justify-between gap-3 transition-colors ${
+                onClick={() => {
+                  if (!n.read) markNotifRead(n.id);
+                  if ((n.type === 'message' || n.type === 'story_reply') && onNavigate) {
+                    onNavigate('messages');
+                  }
+                }}
+                className={`p-4 flex items-start justify-between gap-3 transition-colors cursor-pointer ${
                   !n.read ? 'bg-[#f5f4f0] dark:bg-[#303030]/60' : ''
                 }`}
               >

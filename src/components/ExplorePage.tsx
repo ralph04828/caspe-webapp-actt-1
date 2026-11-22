@@ -1,21 +1,23 @@
 import React, { useMemo, useState } from 'react';
-import { STYLE_CATEGORIES, SocialPost } from '../types';
+import { NavSection, STYLE_CATEGORIES, SocialPost } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useSocial } from '../context/SocialContext';
 import { AvatarImage } from './AvatarImage';
 import { GarmentImage } from './GarmentImage';
 import { PostCard } from './PostCard';
-import { Search, Heart, MessageCircle, Repeat, UserPlus, Check, Clock } from 'lucide-react';
+import { Search, Heart, MessageCircle, Repeat, UserPlus, Check, Clock, Users } from 'lucide-react';
 
 interface ExplorePageProps {
   onOpenProfile: (userId: string) => void;
   onRemixPost: (post: SocialPost) => void;
+  onNavigate?: (section: NavSection) => void;
   onToast: (msg: string, type?: 'success' | 'error') => void;
 }
 
 export const ExplorePage: React.FC<ExplorePageProps> = ({
   onOpenProfile,
   onRemixPost,
+  onNavigate,
   onToast,
 }) => {
   const { userProfile } = useAuth();
@@ -24,6 +26,8 @@ export const ExplorePage: React.FC<ExplorePageProps> = ({
     discoverProfiles,
     isFollowing,
     toggleFollow,
+    getFriendshipState,
+    sendFriendRequest,
   } = useSocial();
 
   const [queryText, setQueryText] = useState('');
@@ -39,8 +43,8 @@ export const ExplorePage: React.FC<ExplorePageProps> = ({
       .filter((p) => {
         if (!q) return true;
         return (
-          p.usernameLower.includes(q) ||
-          p.displayName.toLowerCase().includes(q) ||
+          (p.usernameLower || '').includes(q) ||
+          (p.displayName || '').toLowerCase().includes(q) ||
           (p.styleTags || []).some((t) => t.toLowerCase().includes(q))
         );
       })
@@ -57,8 +61,8 @@ export const ExplorePage: React.FC<ExplorePageProps> = ({
       if (selectedStyle !== 'All' && !post.styleTags?.includes(selectedStyle)) return false;
       if (!q) return true;
       return (
-        post.caption.toLowerCase().includes(q) ||
-        post.authorUsername.toLowerCase().includes(q) ||
+        (post.caption || '').toLowerCase().includes(q) ||
+        (post.authorUsername || '').toLowerCase().includes(q) ||
         post.hashtags?.some((h) => h.includes(q)) ||
         post.styleTags?.some((t) => t.toLowerCase().includes(q))
       );
@@ -100,13 +104,24 @@ export const ExplorePage: React.FC<ExplorePageProps> = ({
 
       {/* People Matching Your Style */}
       <section className="space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2">
           <h2 className="font-display font-bold text-base uppercase tracking-wider">
             {queryText ? 'People' : 'Suggested Style Creators'}
           </h2>
-          <span className="text-xs text-[#4e4c46] dark:text-[#c2bfb8]">
-            Matched to your aesthetics
-          </span>
+          {onNavigate ? (
+            <button
+              type="button"
+              onClick={() => onNavigate('people')}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold underline underline-offset-4 cursor-pointer"
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>Open People Directory</span>
+            </button>
+          ) : (
+            <span className="text-xs text-[#4e4c46] dark:text-[#c2bfb8]">
+              Matched to your aesthetics
+            </span>
+          )}
         </div>
 
         {matchingPeople.length === 0 ? (
@@ -117,6 +132,7 @@ export const ExplorePage: React.FC<ExplorePageProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
             {matchingPeople.slice(0, 6).map((person) => {
               const status = isFollowing(person.uid);
+              const friendState = getFriendshipState(person.uid);
               return (
                 <div
                   key={person.uid}
@@ -152,34 +168,48 @@ export const ExplorePage: React.FC<ExplorePageProps> = ({
                     </div>
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={() => toggleFollow(person)}
-                    className={`px-3 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1.5 shrink-0 transition-colors cursor-pointer ${
-                      status === 'accepted'
-                        ? 'border border-[#d4cfc5] dark:border-[#404040]'
-                        : status === 'pending'
-                        ? 'border border-[#d4cfc5] dark:border-[#404040] opacity-75'
-                        : 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717]'
-                    }`}
-                  >
-                    {status === 'accepted' ? (
-                      <>
-                        <Check className="w-3.5 h-3.5" />
-                        <span>Following</span>
-                      </>
-                    ) : status === 'pending' ? (
-                      <>
-                        <Clock className="w-3.5 h-3.5" />
-                        <span>Requested</span>
-                      </>
+                  <div className="flex flex-col items-end gap-1.5 shrink-0">
+                    {friendState === 'none' ? (
+                      <button
+                        type="button"
+                        onClick={() => sendFriendRequest(person)}
+                        className="px-3 py-1.5 rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-[11px] font-semibold cursor-pointer"
+                      >
+                        Add Friend
+                      </button>
+                    ) : friendState === 'friends' ? (
+                      <span className="px-2.5 py-1 rounded-full border border-[#d4cfc5] dark:border-[#404040] text-[10px] font-semibold">
+                        Friends
+                      </span>
                     ) : (
-                      <>
-                        <UserPlus className="w-3.5 h-3.5" />
-                        <span>Follow</span>
-                      </>
+                      <span className="px-2.5 py-1 rounded-full border border-[#d4cfc5] dark:border-[#404040] text-[10px] opacity-75">
+                        Requested
+                      </span>
                     )}
-                  </button>
+
+                    <button
+                      type="button"
+                      onClick={() => toggleFollow(person)}
+                      className="px-2.5 py-1 rounded-full border border-[#d4cfc5] dark:border-[#404040] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                    >
+                      {status === 'accepted' ? (
+                        <>
+                          <Check className="w-3 h-3" />
+                          <span>Following</span>
+                        </>
+                      ) : status === 'pending' ? (
+                        <>
+                          <Clock className="w-3 h-3" />
+                          <span>Requested</span>
+                        </>
+                      ) : (
+                        <>
+                          <UserPlus className="w-3 h-3" />
+                          <span>Follow</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
               );
             })}
@@ -209,19 +239,19 @@ export const ExplorePage: React.FC<ExplorePageProps> = ({
                 <GarmentImage
                   src={post.thumbUrl || post.mediaUrl}
                   mediaId={post.mediaId}
-                  alt={post.altText || post.caption}
-                  fallbackLabel={post.caption}
+                  alt={post.altText || post.caption || 'Fashion fit post'}
+                  fallbackLabel={post.caption || 'Fit post'}
                   className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/15 to-transparent flex flex-col justify-end p-3 text-[#f5f4f0]">
-                  <p className="text-xs font-semibold truncate">@{post.authorUsername}</p>
-                  <p className="text-[11px] opacity-85 line-clamp-1">{post.caption}</p>
+                  <p className="text-xs font-semibold truncate">@{post.authorUsername || 'member'}</p>
+                  <p className="text-[11px] opacity-85 line-clamp-1">{post.caption || ''}</p>
                   <div className="flex items-center gap-3 mt-1.5 text-[11px] font-mono-num">
                     <span className="flex items-center gap-1">
-                      <Heart className="w-3 h-3" /> {post.likesCount}
+                      <Heart className="w-3 h-3" /> {post.likesCount ?? 0}
                     </span>
                     <span className="flex items-center gap-1">
-                      <MessageCircle className="w-3 h-3" /> {post.commentsCount}
+                      <MessageCircle className="w-3 h-3" /> {post.commentsCount ?? 0}
                     </span>
                     {post.allowRemix && (
                       <span className="flex items-center gap-1 ml-auto">

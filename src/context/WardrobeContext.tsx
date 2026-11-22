@@ -38,6 +38,7 @@ import {
   saveWearLog,
 } from '../services/firestoreService';
 import { deleteImageAsset, updateMediaVisibility } from '../services/storageService';
+import { cleanData } from '../utils/cleanData';
 
 interface DemoStorageState {
   wardrobe: ClothingItem[];
@@ -245,7 +246,7 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   // Wardrobe CRUD
   const addClothing = async (input: Omit<ClothingItem, 'id' | 'userId' | 'createdAt'>) => {
     if (!userProfile) throw new Error('Not authenticated');
-    const newItem: ClothingItem = {
+    const newItem: ClothingItem = cleanData({
       ...input,
       id: createId('item'),
       userId: userProfile.uid,
@@ -253,7 +254,7 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       laundryStatus: input.laundryStatus ?? 'clean',
       visibility: input.visibility ?? userProfile.defaultItemVisibility ?? 'public',
       createdAt: new Date().toISOString(),
-    };
+    });
 
     if (isDemoMode) {
       const nextW = [newItem, ...wardrobe];
@@ -321,14 +322,14 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     if (!userProfile || itemIds.length === 0) return;
     const uniqueIds = Array.from(new Set(itemIds));
     const autoDirty = Boolean(userProfile.autoDirtyOnWear);
-    const log: WearLog = {
+    const log: WearLog = cleanData({
       id: createId('wear'),
       userId: userProfile.uid,
       date,
       itemIds: uniqueIds,
       outfitId,
       createdAt: new Date().toISOString(),
-    };
+    });
 
     if (isDemoMode) {
       const setIds = new Set(uniqueIds);
@@ -364,14 +365,14 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   // Outfit / Lookbook CRUD
   const addOutfit = async (input: Omit<Outfit, 'id' | 'userId' | 'createdAt'>) => {
     if (!userProfile) throw new Error('Not authenticated');
-    const newOutfit: Outfit = {
+    const newOutfit: Outfit = cleanData({
       ...input,
       id: createId('outfit'),
       userId: userProfile.uid,
       visibility: input.visibility ?? userProfile.defaultOutfitVisibility ?? 'public',
       allowRemix: input.allowRemix !== false,
       createdAt: new Date().toISOString(),
-    };
+    });
     if (isDemoMode) {
       const nextO = [newOutfit, ...outfits];
       setOutfits(nextO);
@@ -422,14 +423,14 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   // Wishlist CRUD
   const addWishlist = async (input: Omit<WishlistItem, 'id' | 'userId' | 'createdAt'>) => {
     if (!userProfile) throw new Error('Not authenticated');
-    const newItem: WishlistItem = {
+    const newItem: WishlistItem = cleanData({
       ...input,
       id: createId('wish'),
       userId: userProfile.uid,
       visibility: input.visibility ?? 'private',
       status: input.status ?? 'wanted',
       createdAt: new Date().toISOString(),
-    };
+    });
     if (isDemoMode) {
       const nextWish = [newItem, ...wishlist];
       setWishlist(nextWish);
@@ -476,7 +477,7 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
 
     // Transfer ownership of mediaId to the new wardrobe garment so deleting the wishlist entry later never deletes the wardrobe photo
-    await editWishlist(item.id, { status: 'got_it', mediaId: undefined });
+    await editWishlist(item.id, { status: 'got_it', mediaId: '' });
     const created = await addClothing({
       name: item.name,
       category: (item.category as any) || 'Other',

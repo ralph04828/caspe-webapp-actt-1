@@ -133,6 +133,39 @@
   background: #404040;
 }
 
+@keyframes swooosh-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes swooosh-confetti {
+  0% {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.5) rotate(0deg);
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(140px) scale(1.05) rotate(220deg);
+  }
+}
+
+.animate-swooosh-pop {
+  animation: swooosh-pop 380ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-swooosh-confetti {
+  animation: swooosh-confetti 1.65s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;

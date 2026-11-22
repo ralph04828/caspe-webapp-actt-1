@@ -1,6 +1,6 @@
 {
-  "name": "SWOOOSH — AI Digital Wardrobe & Personal Fashion Stylist",
-  "description": "SWOOOSH is an AI-powered digital wardrobe and personal fashion management platform. PLAN. ORGANIZE. WEAR.",
+  "name": "SWOOOSH",
+  "description": "SWOOOSH is a fashion social network: share your fits, build your wardrobe, plan your outfits, and connect with friends.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": []
 }

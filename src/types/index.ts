@@ -2,21 +2,23 @@ export type ThemeMode = 'dark' | 'light';
 
 export type NavSection =
   | 'home'
+  | 'ootd'
+  | 'people'
   | 'explore'
+  | 'messages'
   | 'wardrobe'
   | 'builder'
   | 'lookbook'
   | 'wishlist'
   | 'planner'
-  | 'ai'
   | 'notifications'
   | 'profile'
   | 'settings';
 
-export type Visibility = 'public' | 'followers' | 'private';
+export type Visibility = 'public' | 'friends' | 'followers' | 'private';
 export type ShareVisibility = 'public' | 'unlisted' | 'revoked';
 export type LaundryStatus = 'clean' | 'dirty' | 'washing';
-export type CommentPolicy = 'everyone' | 'followers' | 'off';
+export type CommentPolicy = 'everyone' | 'friends' | 'followers' | 'off';
 
 export const CLOTHING_CATEGORIES = [
   'T-shirts',
@@ -51,6 +53,21 @@ export const STYLE_CATEGORIES = [
   'Workwear',
 ] as const;
 
+export const FIT_VIBE_TAGS = [
+  'Streetwear',
+  'Minimalist',
+  'Vintage',
+  'Old Money',
+  'Casual',
+  'Oversized',
+  'Y2K',
+  'Sporty',
+  'Techwear',
+  'Colorful',
+] as const;
+
+export type FitVibeTag = (typeof FIT_VIBE_TAGS)[number];
+
 export const SEASON_TAGS = ['Spring', 'Summer', 'Fall', 'Winter', 'All-Season'] as const;
 export type SeasonTag = (typeof SEASON_TAGS)[number];
 
@@ -64,6 +81,8 @@ export interface NotificationPrefs {
   likes: boolean;
   comments: boolean;
   follows: boolean;
+  friends?: boolean;
+  messages?: boolean;
   remixes: boolean;
 }
 
@@ -84,8 +103,17 @@ export interface UserProfile {
   defaultOutfitVisibility: Visibility;
   autoDirtyOnWear: boolean;
   isAdultConfirmed: boolean;
+  onboardingCompleted?: boolean;
+  onboardingStep?: 1 | 2 | 3 | 'reaction' | 'friends';
+  pronouns?: string;
+  location?: string;
+  checklistDismissed?: boolean;
+  showOnlineStatus?: boolean;
+  onlineStatus?: boolean;
+  lastSeenAt?: string;
   weatherLocation?: WeatherLocation;
   notificationPrefs?: NotificationPrefs;
+  friendsCount?: number;
   followersCount: number;
   followingCount: number;
   postsCount: number;
@@ -97,6 +125,7 @@ export interface MediaAsset {
   id: string;
   ownerId: string;
   visibility: Visibility;
+  conversationId?: string;
   contentType: string;
   width: number;
   height: number;
@@ -180,7 +209,7 @@ export interface Outfit {
     displayName: string;
   };
   isFavorite: boolean;
-  source?: 'builder' | 'ai' | 'remix';
+  source?: 'builder' | 'remix' | 'planner';
   createdAt: string;
   updatedAt?: string;
 }
@@ -202,7 +231,12 @@ export interface SocialPost {
   mediaUrl?: string;
   thumbUrl?: string;
   mediaId?: string;
+  mediaUrls?: string[];
+  thumbUrls?: string[];
+  mediaIds?: string[];
   altText?: string;
+  altTexts?: string[];
+  seasons?: SeasonTag[];
   piecesPreview?: OutfitPieceSnapshot[];
   styleTags: string[];
   occasion?: string;
@@ -222,6 +256,7 @@ export interface SocialPost {
   remixesCount: number;
   createdAt: string;
   updatedAt?: string;
+  editedAt?: string;
 }
 
 export interface PostComment {
@@ -233,6 +268,8 @@ export interface PostComment {
   authorName: string;
   authorPhotoUrl?: string;
   text: string;
+  replyToId?: string;
+  replyToUsername?: string;
   imageUrl?: string;
   thumbUrl?: string;
   mediaId?: string;
@@ -255,12 +292,121 @@ export interface FollowEdge {
   updatedAt?: string;
 }
 
+export interface FriendshipEdge {
+  id: string; // sorted `${smallerUid}_${largerUid}`
+  users: [string, string];
+  requesterId: string;
+  requesterUsername: string;
+  requesterName: string;
+  requesterPhotoUrl?: string;
+  recipientId: string;
+  recipientUsername: string;
+  recipientName: string;
+  recipientPhotoUrl?: string;
+  status: 'pending' | 'accepted';
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export type MyDayVisibility = 'public' | 'friends' | 'close_friends';
+
+export interface MyDayStory {
+  id: string;
+  userId: string;
+  authorName: string;
+  authorUsername: string;
+  authorPhotoUrl?: string;
+  mediaUrl: string;
+  thumbUrl?: string;
+  mediaId?: string;
+  altText: string;
+  caption?: string;
+  styleTag?: string;
+  visibility: MyDayVisibility;
+  closeFriendIds?: string[];
+  viewCount: number;
+  expiresAt: string;
+  createdAt: string;
+}
+
+export interface StoryView {
+  id: string; // `${storyId}_${viewerId}`
+  storyId: string;
+  storyOwnerId: string;
+  viewerId: string;
+  viewerUsername: string;
+  viewerName: string;
+  viewerPhotoUrl?: string;
+  viewedAt: string;
+}
+
+export interface ChatParticipantProfile {
+  uid: string;
+  username: string;
+  displayName: string;
+  photoUrl?: string;
+  mediaId?: string;
+}
+
+export interface ChatConversation {
+  id: string;
+  type: 'dm' | 'group';
+  participantIds: string[];
+  participantProfiles: Record<string, ChatParticipantProfile>;
+  name?: string;
+  photoUrl?: string;
+  mediaId?: string;
+  adminIds?: string[];
+  createdBy: string;
+  lastMessageText?: string;
+  lastMessageAt?: string;
+  lastSenderId?: string;
+  unreadBy?: Record<string, number>;
+  lastReadAt?: Record<string, string>;
+  typingBy?: Record<string, string>;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  conversationId: string;
+  senderId: string;
+  senderName: string;
+  senderUsername: string;
+  senderPhotoUrl?: string;
+  text: string;
+  imageUrl?: string;
+  thumbUrl?: string;
+  mediaId?: string;
+  altText?: string;
+  replyTo?: {
+    id: string;
+    senderUsername: string;
+    text: string;
+  };
+  sharedPostId?: string;
+  sharedPostPreview?: {
+    authorUsername: string;
+    caption: string;
+    mediaUrl?: string;
+  };
+  storyReplyId?: string;
+  storyReplyCaption?: string;
+  reactions?: Record<string, string[]>;
+  createdAt: string;
+}
+
 export type NotificationType =
   | 'like'
   | 'comment'
   | 'follow'
   | 'follow_request'
   | 'follow_accept'
+  | 'friend_request'
+  | 'friend_accept'
+  | 'message'
+  | 'story_reply'
   | 'mention'
   | 'remix';
 
@@ -290,7 +436,7 @@ export interface UserSafetyEdge {
 export interface ContentReport {
   id: string;
   reporterId: string;
-  targetType: 'post' | 'comment' | 'user';
+  targetType: 'post' | 'comment' | 'user' | 'message' | 'story';
   targetId: string;
   targetOwnerId?: string;
   reason: string;
@@ -381,97 +527,4 @@ export interface WeatherForecast {
     precipitationProb: number;
   }[];
   fetchedAt: string;
-}
-
-// AI Types
-export interface AIQuotaStatus {
-  configured: boolean;
-  killSwitch?: boolean;
-  used: number;
-  limit: number;
-  remaining: number;
-  isDemo: boolean;
-}
-
-export interface AIGeneratedOutfit {
-  outfitName: string;
-  topId: string;
-  bottomId: string;
-  shoesId: string;
-  accessoryIds: string[];
-  explanation: string;
-  occasion: string;
-  stylingTips: string;
-  missingNote: string;
-}
-
-export interface AIOutfitGeneratorResponse {
-  outfits: AIGeneratedOutfit[];
-  wardrobeReadinessNote: string;
-  quota?: AIQuotaStatus;
-}
-
-export interface AIStyleRecommendationResponse {
-  aestheticSummary: string;
-  combinations: {
-    title: string;
-    itemIds: string[];
-    howToWear: string;
-  }[];
-  gapsToConsider: string;
-  quota?: AIQuotaStatus;
-}
-
-export interface AIColorMatchResponse {
-  colorTheoryNote: string;
-  ownedMatches: {
-    itemId: string;
-    reason: string;
-  }[];
-  complementaryIdeas: {
-    color: string;
-    category: string;
-    pairingAdvice: string;
-  }[];
-  quota?: AIQuotaStatus;
-}
-
-export interface AIOutfitFeedbackResponse {
-  overallImpression: string;
-  colorCoordination: string;
-  proportionsAndSilhouette: string;
-  outfitBalance: string;
-  styleConsistency: string;
-  improvements: string[];
-  quota?: AIQuotaStatus;
-}
-
-export interface AIMissingPiecesResponse {
-  wardrobeSummary: string;
-  suggestions: {
-    pieceName: string;
-    category: string;
-    recommendedColor: string;
-    impactReason: string;
-  }[];
-  quota?: AIQuotaStatus;
-}
-
-export interface AIAutoTagResponse {
-  name: string;
-  category: ClothingCategory;
-  color: string;
-  styleTags: string[];
-  seasons: SeasonTag[];
-  altText: string;
-  description: string;
-  quota?: AIQuotaStatus;
-}
-
-export interface AIRemixResponse {
-  slotToSwap: 'top' | 'bottom' | 'shoes' | 'accessory';
-  replacementItemId: string;
-  replacementSummary: string;
-  rationale: string;
-  quota?: AIQuotaStatus;
 }

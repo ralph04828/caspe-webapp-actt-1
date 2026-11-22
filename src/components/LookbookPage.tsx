@@ -122,7 +122,7 @@ export const LookbookPage: React.FC<LookbookPageProps> = ({
         <div className="p-10 rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] text-center space-y-2">
           <p className="font-display font-bold text-base">No saved outfits yet</p>
           <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8]">
-            Build your first combination in Fit Builder or ask SWOOOSH AI.
+            Build your first combination in Fit Builder or remix a community fit.
           </p>
         </div>
       ) : (
@@ -137,6 +137,8 @@ export const LookbookPage: React.FC<LookbookPageProps> = ({
             const hasPrivatePiece = pieces.some((p) => p!.visibility === 'private');
             const cycleVis =
               outfit.visibility === 'public'
+                ? 'friends'
+                : outfit.visibility === 'friends'
                 ? 'followers'
                 : outfit.visibility === 'followers'
                 ? 'private'
@@ -213,7 +215,7 @@ export const LookbookPage: React.FC<LookbookPageProps> = ({
                       className="px-2.5 py-1.5 rounded-control hover:bg-[#eae7e0] dark:hover:bg-[#303030] text-xs font-medium flex items-center gap-1 cursor-pointer"
                     >
                       <Share2 className="w-3.5 h-3.5" />
-                      <span>Post</span>
+                      <span>Post to feed</span>
                     </button>
 
                     <button

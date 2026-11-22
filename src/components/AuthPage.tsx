@@ -212,13 +212,13 @@ export const AuthPage: React.FC = () => {
           <div className="absolute inset-0 bg-gradient-to-t from-[#171717] via-[#171717]/40 to-transparent" />
           <div className="absolute bottom-10 left-10 right-10 text-[#e5e1da] space-y-3">
             <p className="text-xs tracking-[0.22em] uppercase text-[#c2bfb8]">
-              SWOOOSH AI · YOUR PERSONAL AI FASHION STYLIST
+              CONCRETE EDITION · OPEN STYLE COMMUNITY
             </p>
             <h1 className="font-display text-4xl xl:text-5xl font-bold tracking-tight leading-[1.08] max-w-lg text-balance">
               Share your rotation. Plan every fit.
             </h1>
             <p className="text-sm text-[#c2bfb8] max-w-md leading-relaxed">
-              A fashion community for outfits and digital wardrobes—remix fits with friends, manage your closet and laundry, plan your week, and get real-wardrobe styling from SWOOOSH AI.
+              SWOOOSH is a fashion social network: share your fits, build your wardrobe, plan your outfits, post 24h MyDay stories, and connect with friends.
             </p>
           </div>
         </section>
@@ -511,7 +511,7 @@ export const AuthPage: React.FC = () => {
                 </span>
               </div>
               <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8] leading-relaxed">
-                Preview the social feed, creator profiles, My Wardrobe, Fit Builder, Lookbook, Planner, and SWOOOSH AI with sample outfits.
+                Preview the social feed, creator profiles, MyDay stories, Messages, My Wardrobe, Fit Builder, Lookbook, and Planner with sample outfits.
               </p>
               <button
                 type="button"

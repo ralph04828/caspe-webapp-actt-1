@@ -10,6 +10,8 @@ export const VisibilityBadge: React.FC<{
   const config =
     visibility === 'public'
       ? { label: 'Public', Icon: Globe }
+      : visibility === 'friends'
+      ? { label: 'Friends', Icon: Users }
       : visibility === 'followers'
       ? { label: 'Followers', Icon: Users }
       : { label: 'Private', Icon: Lock };

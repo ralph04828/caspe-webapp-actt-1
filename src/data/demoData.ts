@@ -347,10 +347,10 @@ export const DEMO_OUTFITS: Outfit[] = [
     shoesId: 'demo_item_sneakers_1',
     accessoryIds: [],
     coverImageUrl: IMG_BOXY_TEE,
-    visibility: 'followers',
+    visibility: 'friends',
     allowRemix: true,
     isFavorite: false,
-    source: 'ai',
+    source: 'builder',
     createdAt: '2026-11-02T11:15:00.000Z',
   },
 ];
@@ -431,6 +431,8 @@ export const DEMO_POSTS: SocialPost[] = [
     mentions: [],
     mediaUrl: IMG_JACKET,
     thumbUrl: IMG_JACKET,
+    mediaUrls: [IMG_JACKET, IMG_CARGO],
+    thumbUrls: [IMG_JACKET, IMG_CARGO],
     altText: 'Kenji wearing slate cropped canvas jacket and black wide cargos',
     piecesPreview: [
       { id: 'k1', slot: 'top', name: 'Cropped Duck Canvas Jacket', category: 'Jackets', brand: 'Carhartt WIP', color: 'Slate', imageUrl: IMG_JACKET, visibility: 'public' },
@@ -530,6 +532,8 @@ export const DEMO_COMMENTS: PostComment[] = [
     authorName: 'Marcus Vance',
     authorPhotoUrl: HERO_EDITORIAL_IMG,
     text: 'Need to remix this with my bone low-tops!',
+    replyToId: 'demo_c1',
+    replyToUsername: 'sora.minimal',
     mentions: [],
     createdAt: new Date(Date.now() - 1000 * 60 * 18).toISOString(),
   },
@@ -602,13 +606,13 @@ export const DEMO_NOTIFICATIONS: AppNotification[] = [
   {
     id: 'demo_notif_2',
     recipientId: DEMO_USER_ID,
-    actorId: 'creator_mina',
-    actorUsername: 'mina.cuts',
-    actorName: 'Mina Park',
-    actorPhotoUrl: IMG_BOXY_TEE,
-    type: 'follow_request',
-    targetId: 'creator_mina',
-    targetPreview: 'Requested to follow you',
+    actorId: 'creator_sora',
+    actorUsername: 'sora.minimal',
+    actorName: 'Sora Lin',
+    actorPhotoUrl: IMG_HOODIE,
+    type: 'friend_request',
+    targetId: 'creator_sora',
+    targetPreview: 'Sent you a friend request',
     read: false,
     createdAt: new Date(Date.now() - 1000 * 60 * 40).toISOString(),
   },
@@ -670,3 +674,139 @@ export function getInitialDemoWearLogs(): WearLog[] {
     },
   ];
 }
+
+export function getDemoFriendships() {
+  const now = new Date(Date.now() - 1000 * 60 * 60 * 5).toISOString();
+  return [
+    {
+      id: `creator_kenji_${DEMO_USER_ID}`,
+      users: ['creator_kenji', DEMO_USER_ID] as [string, string],
+      requesterId: DEMO_USER_ID,
+      requesterUsername: 'marcus.concrete',
+      requesterName: 'Marcus Vance',
+      requesterPhotoUrl: HERO_EDITORIAL_IMG,
+      recipientId: 'creator_kenji',
+      recipientUsername: 'kenji.studio',
+      recipientName: 'Kenji Takahashi',
+      recipientPhotoUrl: IMG_JACKET,
+      status: 'accepted' as const,
+      createdAt: now,
+    },
+    {
+      id: `creator_sora_${DEMO_USER_ID}`,
+      users: ['creator_sora', DEMO_USER_ID] as [string, string],
+      requesterId: 'creator_sora',
+      requesterUsername: 'sora.minimal',
+      requesterName: 'Sora Lin',
+      requesterPhotoUrl: IMG_HOODIE,
+      recipientId: DEMO_USER_ID,
+      recipientUsername: 'marcus.concrete',
+      recipientName: 'Marcus Vance',
+      recipientPhotoUrl: HERO_EDITORIAL_IMG,
+      status: 'pending' as const,
+      createdAt: new Date(Date.now() - 1000 * 60 * 40).toISOString(),
+    },
+  ];
+}
+
+export function getDemoStories() {
+  const now = Date.now();
+  return [
+    {
+      id: 'demo_story_kenji_1',
+      userId: 'creator_kenji',
+      authorName: 'Kenji Takahashi',
+      authorUsername: 'kenji.studio',
+      authorPhotoUrl: IMG_JACKET,
+      mediaUrl: IMG_JACKET,
+      thumbUrl: IMG_JACKET,
+      altText: 'Kenji Takahashi wearing slate canvas jacket',
+      caption: 'Morning rain check in Shibuya — canvas shell holding up',
+      styleTag: 'Workwear',
+      visibility: 'public' as const,
+      viewCount: 12,
+      createdAt: new Date(now - 1000 * 60 * 95).toISOString(),
+      expiresAt: new Date(now + 1000 * 60 * 60 * 22).toISOString(),
+    },
+    {
+      id: 'demo_story_sora_1',
+      userId: 'creator_sora',
+      authorName: 'Sora Lin',
+      authorUsername: 'sora.minimal',
+      authorPhotoUrl: IMG_HOODIE,
+      mediaUrl: IMG_HOODIE,
+      thumbUrl: IMG_HOODIE,
+      altText: 'Bone hoodie studio texture shot',
+      caption: 'Warm bone fleece & minimal coffee run',
+      styleTag: 'Minimalist',
+      visibility: 'public' as const,
+      viewCount: 8,
+      createdAt: new Date(now - 1000 * 60 * 45).toISOString(),
+      expiresAt: new Date(now + 1000 * 60 * 60 * 23).toISOString(),
+    },
+  ];
+}
+
+export function getDemoConversations() {
+  const now = new Date(Date.now() - 1000 * 60 * 12).toISOString();
+  return [
+    {
+      id: `dm_creator_kenji_${DEMO_USER_ID}`,
+      type: 'dm' as const,
+      participantIds: ['creator_kenji', DEMO_USER_ID],
+      participantProfiles: {
+        creator_kenji: {
+          uid: 'creator_kenji',
+          username: 'kenji.studio',
+          displayName: 'Kenji Takahashi',
+          photoUrl: IMG_JACKET,
+        },
+        [DEMO_USER_ID]: {
+          uid: DEMO_USER_ID,
+          username: 'marcus.concrete',
+          displayName: 'Marcus Vance',
+          photoUrl: HERO_EDITORIAL_IMG,
+        },
+      },
+      createdBy: 'creator_kenji',
+      lastMessageText: 'That bone hoodie looks crazy with wide cargos.',
+      lastMessageAt: now,
+      lastSenderId: 'creator_kenji',
+      unreadBy: { [DEMO_USER_ID]: 1, creator_kenji: 0 },
+      lastReadAt: { creator_kenji: now },
+      createdAt: new Date(Date.now() - 1000 * 60 * 120).toISOString(),
+      updatedAt: now,
+    },
+  ];
+}
+
+export function getDemoMessages() {
+  return [
+    {
+      id: 'demo_msg_1',
+      conversationId: `dm_creator_kenji_${DEMO_USER_ID}`,
+      senderId: DEMO_USER_ID,
+      senderName: 'Marcus Vance',
+      senderUsername: 'marcus.concrete',
+      senderPhotoUrl: HERO_EDITORIAL_IMG,
+      text: 'Yo Kenji, which cargos are those in your rainy OOTD?',
+      createdAt: new Date(Date.now() - 1000 * 60 * 45).toISOString(),
+    },
+    {
+      id: 'demo_msg_2',
+      conversationId: `dm_creator_kenji_${DEMO_USER_ID}`,
+      senderId: 'creator_kenji',
+      senderName: 'Kenji Takahashi',
+      senderUsername: 'kenji.studio',
+      senderPhotoUrl: IMG_JACKET,
+      text: 'That bone hoodie looks crazy with wide cargos.',
+      replyTo: {
+        id: 'demo_msg_1',
+        senderUsername: 'marcus.concrete',
+        text: 'Yo Kenji, which cargos are those in your rainy OOTD?',
+      },
+      createdAt: new Date(Date.now() - 1000 * 60 * 12).toISOString(),
+    },
+  ];
+}
+

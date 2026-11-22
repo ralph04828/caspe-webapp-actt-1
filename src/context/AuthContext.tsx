@@ -18,24 +18,31 @@ import {
 } from 'firebase/auth';
 import { auth, googleProvider } from '../firebase';
 import {
+  claimUsernameAndSaveProfile,
   deleteAllUserData,
   getUserProfile,
   isUsernameAvailable,
-  reserveUsername,
-  saveUserProfile,
+  savePrivateUserBirthday,
+  updateUserPresence,
   updateUserProfileDoc,
 } from '../services/firestoreService';
-import { DEMO_USER_ID, DEMO_USER_PROFILE } from '../data/demoData';
+import { DEMO_USER_PROFILE } from '../data/demoData';
 import { ThemeMode, UserProfile } from '../types';
 import { useTheme } from './ThemeContext';
 import { normalizeUsername, validateUsername } from '../utils/formatters';
 import { clearMediaCache, deleteImageAsset } from '../services/storageService';
+
+export type OnboardingStep = 1 | 2 | 3 | 'reaction' | 'friends';
 
 interface AuthContextType {
   currentUser: User | null;
   userProfile: UserProfile | null;
   loading: boolean;
   isDemoMode: boolean;
+  needsOnboarding: boolean;
+  isLegacyStep1Only: boolean;
+  inviteUsername: string | null;
+  clearInviteUsername: () => void;
   error: string | null;
   clearError: () => void;
   signIn: (email: string, password: string, rememberMe?: boolean) => Promise<void>;
@@ -47,6 +54,19 @@ interface AuthContextType {
     password: string;
     isAdultConfirmed: boolean;
   }) => Promise<void>;
+  saveOnboardingStep1: (params: {
+    displayName: string;
+    username: string;
+    bio: string;
+    styleTags: string[];
+    pronouns?: string;
+    location?: string;
+    birthday?: string;
+    photoURL?: string;
+    mediaId?: string;
+    isAdultConfirmed: boolean;
+  }) => Promise<void>;
+  advanceOnboardingStep: (step: OnboardingStep, markCompleted?: boolean) => Promise<void>;
   checkUsernameFree: (username: string) => Promise<boolean>;
   resetPassword: (email: string) => Promise<void>;
   enterDemoMode: () => void;
@@ -66,36 +86,59 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [isDemoMode, setIsDemoMode] = useState(false);
+  const [isLegacyStep1Only, setIsLegacyStep1Only] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [inviteUsername, setInviteUsername] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const params = new URLSearchParams(window.location.search);
+    const u = params.get('u') || params.get('join');
+    return u ? normalizeUsername(u) : null;
+  });
+
   const pendingSignupRef = useRef<{ displayName: string; usernameLower: string } | null>(null);
 
   const clearError = () => setError(null);
 
-  const buildDefaultProfile = (user: User, preferredUsername?: string): UserProfile => {
-    const baseName = user.displayName || user.email?.split('@')[0] || 'Member';
-    const rawUser = preferredUsername || `${normalizeUsername(baseName) || 'member'}_${user.uid.slice(0, 4)}`;
-    const usernameLower = normalizeUsername(rawUser).padEnd(3, 's');
+  const clearInviteUsername = () => {
+    setInviteUsername(null);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('u');
+      url.searchParams.delete('join');
+      window.history.replaceState({}, '', url.toString());
+    }
+  };
+
+  const buildFreshDraftProfile = (user: User): UserProfile => {
+    const now = new Date().toISOString();
     return {
       uid: user.uid,
-      email: '', // Keep PII email out of shared profile documents; read from auth.currentUser
-      displayName: baseName,
-      username: usernameLower,
-      usernameLower,
+      email: user.email || '',
+      displayName: user.displayName || '',
+      username: '',
+      usernameLower: '',
       bio: '',
       photoURL: user.photoURL || undefined,
       theme: 'dark',
       stylePreference: 'Streetwear',
-      styleTags: ['Streetwear', 'Minimalist'],
+      styleTags: ['Streetwear'],
       isPublic: true,
       defaultItemVisibility: 'public',
       defaultOutfitVisibility: 'public',
       autoDirtyOnWear: false,
-      isAdultConfirmed: true,
-      notificationPrefs: { likes: true, comments: true, follows: true, remixes: true },
+      isAdultConfirmed: false,
+      onboardingCompleted: false,
+      onboardingStep: 1,
+      checklistDismissed: false,
+      showOnlineStatus: true,
+      onlineStatus: true,
+      lastSeenAt: now,
+      notificationPrefs: { likes: true, comments: true, follows: true, friends: true, messages: true, remixes: true },
+      friendsCount: 0,
       followersCount: 0,
       followingCount: 0,
       postsCount: 0,
-      createdAt: new Date().toISOString(),
+      createdAt: now,
     };
   };
 
@@ -103,7 +146,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const demoFlag = localStorage.getItem(DEMO_SESSION_KEY);
     if (demoFlag === 'true') {
       setIsDemoMode(true);
-      setUserProfile(DEMO_USER_PROFILE);
+      setIsLegacyStep1Only(false);
+      setUserProfile({ ...DEMO_USER_PROFILE, onboardingCompleted: true, showOnlineStatus: true, onlineStatus: true });
       setLoading(false);
     }
 
@@ -117,15 +161,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (pendingSignupRef.current) {
             return;
           }
-          let profile = await getUserProfile(user.uid);
-          if (!profile && !pendingSignupRef.current) {
-            profile = buildDefaultProfile(user);
-            await reserveUsername(profile.usernameLower, user.uid).catch(() => {});
-            await saveUserProfile(profile);
-          }
+          const profile = await getUserProfile(user.uid);
           if (!profile) {
+            // Brand-new account (e.g. first-time Google Sign-In): keep unsaved draft on Step 1
+            // until they pick a unique @username and complete Step 1 transactionally.
+            setIsLegacyStep1Only(false);
+            setUserProfile(buildFreshDraftProfile(user));
+            setLoading(false);
             return;
           }
+
+          const missingCoreFields = !profile.usernameLower?.trim() || !profile.displayName?.trim();
+          const hasExplicitFlag = typeof profile.onboardingCompleted === 'boolean';
+          const legacyNeedsStep1Only = missingCoreFields && (profile.onboardingCompleted === true || !hasExplicitFlag);
+          setIsLegacyStep1Only(legacyNeedsStep1Only);
+
+          const effectiveCompleted = missingCoreFields
+            ? false
+            : hasExplicitFlag
+            ? profile.onboardingCompleted
+            : true;
+
+          const effectiveStep: OnboardingStep = missingCoreFields
+            ? 1
+            : profile.onboardingStep || (effectiveCompleted ? 1 : 2);
+
           const hydrated: UserProfile = {
             ...profile,
             email: user.email || profile.email || '',
@@ -134,6 +194,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             defaultOutfitVisibility: profile.defaultOutfitVisibility || 'public',
             isPublic: profile.isPublic !== false,
             autoDirtyOnWear: Boolean(profile.autoDirtyOnWear),
+            onboardingCompleted: effectiveCompleted,
+            onboardingStep: effectiveStep,
+            showOnlineStatus: profile.showOnlineStatus !== false,
+            friendsCount: profile.friendsCount || 0,
             followersCount: profile.followersCount || 0,
             followingCount: profile.followingCount || 0,
             postsCount: profile.postsCount || 0,
@@ -144,11 +208,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         } catch (err) {
           console.warn('Could not load Firestore user profile:', err);
-          setUserProfile(buildDefaultProfile(user));
+          setIsLegacyStep1Only(false);
+          setUserProfile(buildFreshDraftProfile(user));
         }
         setLoading(false);
       } else {
         setCurrentUser(null);
+        setIsLegacyStep1Only(false);
         if (localStorage.getItem(DEMO_SESSION_KEY) !== 'true') {
           setUserProfile(null);
         }
@@ -158,6 +224,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     return () => unsubscribe();
   }, []);
+
+  // Presence heartbeat for live online / last-seen dot (only once profile exists in Firestore)
+  useEffect(() => {
+    if (isDemoMode || !userProfile?.uid || !userProfile.usernameLower) return;
+    const show = userProfile.showOnlineStatus !== false;
+    updateUserPresence(userProfile.uid, show, show);
+
+    const interval = setInterval(() => {
+      updateUserPresence(userProfile.uid, show, show);
+    }, 60_000);
+
+    const handleBeforeUnload = () => {
+      updateUserPresence(userProfile.uid, false, show);
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [userProfile?.uid, userProfile?.usernameLower, userProfile?.showOnlineStatus, isDemoMode]);
 
   const mapAuthError = (err: any): string => {
     const code = err?.code || '';
@@ -177,7 +264,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       case 'auth/popup-closed-by-user':
         return 'Sign-in popup was closed before completing. Please try again.';
       case 'auth/operation-not-allowed':
-        return 'Email/Password sign-in is disabled in Firebase Console. Open Firebase Console → Authentication → Sign-in method and enable Email/Password (free on Spark plan), or use Google Sign-In / Explore Demo.';
+        return 'Email/Password sign-in is disabled in Firebase Console. Use Google Sign-In or enable Email/Password under Authentication → Sign-in method.';
       case 'auth/unauthorized-domain':
         return 'This domain is not authorized in Firebase Authentication settings yet. Add it under Authentication → Settings → Authorized domains in Firebase Console.';
       case 'auth/network-request-failed':
@@ -263,7 +350,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (cred.user && params.fullName.trim()) {
         await updateProfile(cred.user, { displayName: params.fullName.trim() });
       }
-      await reserveUsername(usernameLower, cred.user.uid);
+      const now = new Date().toISOString();
       const profile: UserProfile = {
         uid: cred.user.uid,
         email: '',
@@ -279,13 +366,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         defaultOutfitVisibility: 'public',
         autoDirtyOnWear: false,
         isAdultConfirmed: true,
-        notificationPrefs: { likes: true, comments: true, follows: true, remixes: true },
+        onboardingCompleted: false,
+        onboardingStep: 1,
+        checklistDismissed: false,
+        showOnlineStatus: true,
+        onlineStatus: true,
+        lastSeenAt: now,
+        notificationPrefs: { likes: true, comments: true, follows: true, friends: true, messages: true, remixes: true },
+        friendsCount: 0,
         followersCount: 0,
         followingCount: 0,
         postsCount: 0,
-        createdAt: new Date().toISOString(),
+        createdAt: now,
       };
-      await saveUserProfile(profile);
+      await claimUsernameAndSaveProfile({
+        uid: cred.user.uid,
+        newUsernameLower: usernameLower,
+        profileCreatePayload: profile,
+      });
+      setIsLegacyStep1Only(false);
       setUserProfile({ ...profile, email: cred.user.email || params.email.trim() });
     } catch (err: any) {
       const msg = mapAuthError(err);
@@ -293,6 +392,118 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       throw new Error(msg);
     } finally {
       pendingSignupRef.current = null;
+    }
+  };
+
+  const saveOnboardingStep1: AuthContextType['saveOnboardingStep1'] = async (params) => {
+    if (!userProfile) return;
+    if (!params.isAdultConfirmed) {
+      throw new Error('You must confirm you are 13 or older to continue.');
+    }
+    const cleanName = params.displayName.trim();
+    if (!cleanName) throw new Error('Please enter a display name.');
+
+    const usernameErr = validateUsername(params.username);
+    if (usernameErr) throw new Error(usernameErr);
+    const lower = normalizeUsername(params.username);
+
+    const nextCompleted = isLegacyStep1Only ? true : false;
+    const nextStep: OnboardingStep = isLegacyStep1Only ? 1 : 2;
+    const now = new Date().toISOString();
+
+    const cleanTags = params.styleTags.length > 0 ? params.styleTags : ['Streetwear'];
+    const cleanPronouns = params.pronouns?.trim().slice(0, 32) || undefined;
+    const cleanLocation = params.location?.trim().slice(0, 60) || undefined;
+
+    const createPayload: UserProfile = {
+      ...userProfile,
+      email: '',
+      displayName: cleanName,
+      username: lower,
+      usernameLower: lower,
+      bio: params.bio.trim().slice(0, 160),
+      styleTags: cleanTags,
+      stylePreference: cleanTags[0],
+      ...(cleanPronouns ? { pronouns: cleanPronouns } : {}),
+      ...(cleanLocation ? { location: cleanLocation } : {}),
+      ...(params.photoURL !== undefined ? { photoURL: params.photoURL } : {}),
+      ...(params.mediaId !== undefined ? { mediaId: params.mediaId } : {}),
+      isAdultConfirmed: true,
+      onboardingCompleted: nextCompleted,
+      onboardingStep: nextStep,
+      updatedAt: now,
+    };
+
+    const updatePayload: Partial<UserProfile> = {
+      displayName: cleanName,
+      username: lower,
+      usernameLower: lower,
+      bio: params.bio.trim().slice(0, 160),
+      styleTags: cleanTags,
+      stylePreference: cleanTags[0],
+      ...(cleanPronouns !== undefined ? { pronouns: cleanPronouns } : {}),
+      ...(cleanLocation !== undefined ? { location: cleanLocation } : {}),
+      ...(params.photoURL !== undefined ? { photoURL: params.photoURL } : {}),
+      ...(params.mediaId !== undefined ? { mediaId: params.mediaId } : {}),
+      isAdultConfirmed: true,
+      onboardingCompleted: nextCompleted,
+      onboardingStep: nextStep,
+    };
+
+    if (!isDemoMode) {
+      await claimUsernameAndSaveProfile({
+        uid: userProfile.uid,
+        newUsernameLower: lower,
+        oldUsernameLower: userProfile.usernameLower || undefined,
+        profileCreatePayload: createPayload,
+        profileUpdatePayload: updatePayload,
+      });
+
+      if (params.birthday) {
+        await savePrivateUserBirthday(userProfile.uid, params.birthday);
+      }
+
+      if (auth.currentUser) {
+        const nextHttpPhoto =
+          params.photoURL && /^https?:\/\//i.test(params.photoURL)
+            ? params.photoURL
+            : auth.currentUser.photoURL ?? undefined;
+        await updateProfile(auth.currentUser, {
+          displayName: cleanName,
+          photoURL: nextHttpPhoto,
+        }).catch(() => {});
+      }
+    }
+
+    if (params.mediaId && userProfile.mediaId && params.mediaId !== userProfile.mediaId) {
+      deleteImageAsset(userProfile.mediaId).catch(() => {});
+    }
+
+    setUserProfile((prev) =>
+      prev
+        ? {
+            ...prev,
+            ...updatePayload,
+          }
+        : prev
+    );
+    if (nextCompleted) {
+      setIsLegacyStep1Only(false);
+    }
+  };
+
+  const advanceOnboardingStep = async (step: OnboardingStep, markCompleted = false) => {
+    if (!userProfile) return;
+    const updates: Partial<UserProfile> = {
+      onboardingStep: step,
+      ...(markCompleted ? { onboardingCompleted: true } : {}),
+    };
+    if (!isDemoMode && userProfile.usernameLower) {
+      await updateUserProfileDoc(userProfile.uid, updates);
+    }
+    setUserProfile((prev) => (prev ? { ...prev, ...updates } : prev));
+    if (markCompleted) {
+      setIsLegacyStep1Only(false);
     }
   };
 
@@ -311,14 +522,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setError(null);
     localStorage.setItem(DEMO_SESSION_KEY, 'true');
     setIsDemoMode(true);
-    setUserProfile(DEMO_USER_PROFILE);
+    setIsLegacyStep1Only(false);
+    setUserProfile({
+      ...DEMO_USER_PROFILE,
+      onboardingCompleted: true,
+      showOnlineStatus: true,
+      onlineStatus: true,
+      friendsCount: 1,
+    });
   };
 
   const signOutUser = async () => {
     setError(null);
+    if (!isDemoMode && userProfile?.uid && userProfile.usernameLower) {
+      await updateUserPresence(userProfile.uid, false, false).catch(() => {});
+    }
     clearMediaCache();
     localStorage.removeItem(DEMO_SESSION_KEY);
     setIsDemoMode(false);
+    setIsLegacyStep1Only(false);
     setUserProfile(null);
     setCurrentUser(null);
     try {
@@ -332,16 +554,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!userProfile) return;
 
     const cleanUpdates = { ...updates };
-    if (cleanUpdates.username) {
+    let usernameChanged = false;
+    let nextUsernameLower = userProfile.usernameLower;
+
+    if (cleanUpdates.username !== undefined) {
       const err = validateUsername(cleanUpdates.username);
       if (err) throw new Error(err);
       const lower = normalizeUsername(cleanUpdates.username);
       if (lower !== userProfile.usernameLower) {
-        const free = await checkUsernameFree(lower);
-        if (!free) throw new Error(`@${lower} is already taken.`);
-        if (!isDemoMode) {
-          await reserveUsername(lower, userProfile.uid);
-        }
+        usernameChanged = true;
+        nextUsernameLower = lower;
         cleanUpdates.username = lower;
         cleanUpdates.usernameLower = lower;
       }
@@ -367,11 +589,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }).catch(() => {});
     }
 
-    // Never persist email field into Firestore /users doc to prevent PII leakage
     const firestorePayload = { ...cleanUpdates };
     delete firestorePayload.email;
 
-    await updateUserProfileDoc(userProfile.uid, firestorePayload);
+    if (usernameChanged) {
+      await claimUsernameAndSaveProfile({
+        uid: userProfile.uid,
+        newUsernameLower: nextUsernameLower,
+        oldUsernameLower: userProfile.usernameLower || undefined,
+        profileUpdatePayload: firestorePayload,
+      });
+    } else {
+      await updateUserProfileDoc(userProfile.uid, firestorePayload);
+    }
+
     if (cleanUpdates.mediaId && userProfile.mediaId && cleanUpdates.mediaId !== userProfile.mediaId) {
       deleteImageAsset(userProfile.mediaId).catch(() => {});
     }
@@ -400,7 +631,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (isDemoMode) {
       localStorage.removeItem(DEMO_SESSION_KEY);
       localStorage.removeItem('swooosh_demo_data_v2');
-      localStorage.removeItem('swooosh_demo_social_v2');
+      localStorage.removeItem('swooosh_demo_social_v3');
       setIsDemoMode(false);
       setUserProfile(null);
       return;
@@ -416,6 +647,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setCurrentUser(null);
   };
 
+  const needsOnboarding = Boolean(
+    userProfile &&
+      !isDemoMode &&
+      (userProfile.onboardingCompleted !== true ||
+        !userProfile.usernameLower?.trim() ||
+        !userProfile.displayName?.trim())
+  );
+
   return (
     <AuthContext.Provider
       value={{
@@ -423,11 +662,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         userProfile,
         loading,
         isDemoMode,
+        needsOnboarding,
+        isLegacyStep1Only,
+        inviteUsername,
+        clearInviteUsername,
         error,
         clearError,
         signIn,
         signInWithGoogle,
         signUp,
+        saveOnboardingStep1,
+        advanceOnboardingStep,
         checkUsernameFree,
         resetPassword,
         enterDemoMode,

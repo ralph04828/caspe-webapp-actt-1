@@ -2,7 +2,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   BOTTOM_CATEGORIES,
   ClothingItem,
+  MyDayStory,
   NavSection,
+  Outfit,
   SHOE_CATEGORIES,
   SocialPost,
   TOP_CATEGORIES,
@@ -12,19 +14,24 @@ import { useAuth } from '../context/AuthContext';
 import { useWardrobe } from '../context/WardrobeContext';
 import { useSocial } from '../context/SocialContext';
 import { getUserProfile } from '../services/firestoreService';
-import { daysSince } from '../utils/formatters';
+import { daysSince, formatRelativeTime } from '../utils/formatters';
 import { AvatarImage } from './AvatarImage';
 import { GarmentImage } from './GarmentImage';
 import { PostCard } from './PostCard';
 import {
   ArrowLeft,
   Ban,
-  Flame,
-  Lock,
-  Settings,
-  UserPlus,
   Check,
   Clock,
+  Copy,
+  Flag,
+  Flame,
+  Lock,
+  MessageCircle,
+  Settings,
+  UserMinus,
+  UserPlus,
+  Users,
   VolumeX,
 } from 'lucide-react';
 
@@ -33,6 +40,8 @@ interface ProfilePageProps {
   onBackToOwn: () => void;
   onOpenProfile: (uid: string) => void;
   onNavigate: (section: NavSection) => void;
+  onMessageUser?: (target: UserProfile) => void;
+  onViewStory?: (userId: string) => void;
   onRemixPost: (post: SocialPost) => void;
   onToast: (msg: string, type?: 'success' | 'error') => void;
 }
@@ -42,20 +51,31 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
   onBackToOwn,
   onOpenProfile,
   onNavigate,
+  onMessageUser,
+  onViewStory,
   onRemixPost,
   onToast,
 }) => {
   const { userProfile } = useAuth();
-  const { wardrobe, wearLogs } = useWardrobe();
+  const { wardrobe, outfits, wearLogs } = useWardrobe();
   const {
     visiblePostsForFeed,
+    myPosts,
     savedPostIds,
     discoverProfiles,
+    friendships,
+    friendIds,
+    storiesForFeed,
     isFollowing,
+    getFriendshipState,
+    sendFriendRequest,
+    acceptFriendRequest,
+    removeOrCancelFriend,
     toggleFollow,
     fetchProfileData,
     toggleBlock,
     toggleMute,
+    reportItem,
     isBlocked,
     isMuted,
   } = useSocial();
@@ -65,37 +85,45 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
   const [targetProfile, setTargetProfile] = useState<UserProfile | null>(null);
   const [profilePosts, setProfilePosts] = useState<SocialPost[]>([]);
   const [profileWardrobe, setProfileWardrobe] = useState<ClothingItem[]>([]);
-  const [tab, setTab] = useState<'fits' | 'wardrobe' | 'stats' | 'saved'>('fits');
+  const [profileOutfits, setProfileOutfits] = useState<Outfit[]>([]);
+  const [profileStories, setProfileStories] = useState<MyDayStory[]>([]);
+  const [tab, setTab] = useState<'posts' | 'wardrobe' | 'lookbook' | 'myday' | 'friends' | 'stats' | 'saved'>('posts');
 
   useEffect(() => {
     if (isOwn) {
       setTargetProfile(userProfile);
-      setProfilePosts(visiblePostsForFeed.filter((p) => p.userId === userProfile?.uid));
+      setProfilePosts(myPosts.length > 0 ? myPosts : visiblePostsForFeed.filter((p) => p.userId === userProfile?.uid));
       setProfileWardrobe(wardrobe);
+      setProfileOutfits(outfits);
+      setProfileStories(storiesForFeed.filter((s) => s.userId === userProfile?.uid));
       return;
     }
 
     const fromDiscover = discoverProfiles.find((p) => p.uid === viewingUserId) || null;
     if (fromDiscover) {
       setTargetProfile(fromDiscover);
-      fetchProfileData(fromDiscover).then(({ posts, wardrobe: w }) => {
+      fetchProfileData(fromDiscover).then(({ posts, wardrobe: w, outfits: o, stories: st }) => {
         setProfilePosts(posts);
         setProfileWardrobe(w);
+        setProfileOutfits(o);
+        setProfileStories(st);
       });
     } else if (viewingUserId) {
       getUserProfile(viewingUserId)
         .then((p) => {
           setTargetProfile(p);
           if (p) {
-            fetchProfileData(p).then(({ posts, wardrobe: w }) => {
+            fetchProfileData(p).then(({ posts, wardrobe: w, outfits: o, stories: st }) => {
               setProfilePosts(posts);
               setProfileWardrobe(w);
+              setProfileOutfits(o);
+              setProfileStories(st);
             });
           }
         })
         .catch(() => {});
     }
-  }, [viewingUserId, isOwn, userProfile, visiblePostsForFeed, wardrobe, discoverProfiles]);
+  }, [viewingUserId, isOwn, userProfile, myPosts, visiblePostsForFeed, wardrobe, outfits, storiesForFeed, discoverProfiles]);
 
   // Owner-only private Style Stats (NO prices / costs!)
   const styleStats = useMemo(() => {
@@ -111,7 +139,6 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
     const shoes = wardrobe.filter((w) => SHOE_CATEGORIES.includes(w.category)).length;
     const versatilityCombos = Math.max(0, tops * bottoms * Math.max(1, shoes));
 
-    // Wear streak calculation
     const uniqueDates = Array.from(new Set(wearLogs.map((l) => l.date))).sort().reverse();
     let streak = 0;
     const cursor = new Date();
@@ -139,6 +166,11 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
     [visiblePostsForFeed, savedPostIds]
   );
 
+  const ownFriendProfiles = useMemo(
+    () => discoverProfiles.filter((p) => friendIds.includes(p.uid)),
+    [discoverProfiles, friendIds]
+  );
+
   if (!targetProfile) {
     return (
       <div className="p-8 rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] text-center text-xs">
@@ -148,7 +180,22 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
   }
 
   const followStatus = isOwn ? 'none' : isFollowing(targetProfile.uid);
-  const canSeePrivateContent = isOwn || targetProfile.isPublic || followStatus === 'accepted';
+  const friendState = isOwn ? 'none' : getFriendshipState(targetProfile.uid);
+  const incomingEdge =
+    !isOwn && userProfile
+      ? friendships.find(
+          (f) => f.status === 'pending' && f.requesterId === targetProfile.uid && f.recipientId === userProfile.uid
+        )
+      : undefined;
+
+  const canSeePrivateContent =
+    isOwn || targetProfile.isPublic || friendState === 'friends' || followStatus === 'accepted';
+
+  const copyInviteLink = () => {
+    const link = `${window.location.origin}/?u=${targetProfile.username}`;
+    navigator.clipboard?.writeText(link);
+    onToast('Invite link copied!');
+  };
 
   return (
     <div className="space-y-6">
@@ -187,10 +234,16 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
             </div>
             <p className="text-xs font-mono-num text-[#4e4c46] dark:text-[#c2bfb8]">
               @{targetProfile.username}
+              {targetProfile.pronouns ? ` · ${targetProfile.pronouns}` : ''}
+              {targetProfile.location ? ` · ${targetProfile.location}` : ''}
             </p>
             {targetProfile.bio && <p className="text-sm max-w-xl">{targetProfile.bio}</p>}
 
             <div className="flex flex-wrap items-center gap-4 pt-1 text-xs">
+              <span>
+                <strong className="font-mono-num">{targetProfile.friendsCount || (isOwn ? friendIds.length : 0)}</strong>{' '}
+                Friends
+              </span>
               <span>
                 <strong className="font-mono-num">{targetProfile.followersCount || 0}</strong>{' '}
                 Followers
@@ -208,42 +261,83 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
 
         <div className="flex flex-wrap items-center gap-2 shrink-0">
           {isOwn ? (
-            <button
-              type="button"
-              onClick={() => onNavigate('settings')}
-              className="px-4 py-2 rounded-full border border-[#d4cfc5] dark:border-[#404040] text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
-            >
-              <Settings className="w-3.5 h-3.5" />
-              <span>Edit Profile & Privacy</span>
-            </button>
-          ) : (
             <>
               <button
                 type="button"
-                onClick={() => toggleFollow(targetProfile)}
-                className={`px-5 py-2 rounded-full text-xs font-semibold flex items-center gap-1.5 cursor-pointer ${
-                  followStatus === 'accepted' || followStatus === 'pending'
-                    ? 'border border-[#d4cfc5] dark:border-[#404040]'
-                    : 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717]'
-                }`}
+                onClick={copyInviteLink}
+                className="px-4 py-2 min-h-[42px] rounded-full border border-[#d4cfc5] dark:border-[#404040] text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
               >
-                {followStatus === 'accepted' ? (
-                  <>
-                    <Check className="w-3.5 h-3.5" />
-                    <span>Following</span>
-                  </>
-                ) : followStatus === 'pending' ? (
-                  <>
-                    <Clock className="w-3.5 h-3.5" />
-                    <span>Requested</span>
-                  </>
-                ) : (
-                  <>
-                    <UserPlus className="w-3.5 h-3.5" />
-                    <span>Follow</span>
-                  </>
-                )}
+                <Copy className="w-3.5 h-3.5" />
+                <span>Copy invite link</span>
               </button>
+              <button
+                type="button"
+                onClick={() => onNavigate('settings')}
+                className="px-4 py-2 min-h-[42px] rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+              >
+                <Settings className="w-3.5 h-3.5" />
+                <span>Edit Profile & Privacy</span>
+              </button>
+            </>
+          ) : (
+            <>
+              {friendState === 'friends' ? (
+                <button
+                  type="button"
+                  onClick={() => removeOrCancelFriend(targetProfile.uid)}
+                  className="px-4 py-2 min-h-[42px] rounded-full border border-[#d4cfc5] dark:border-[#404040] text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Friends</span>
+                </button>
+              ) : friendState === 'incoming_pending' && incomingEdge ? (
+                <button
+                  type="button"
+                  onClick={() => acceptFriendRequest(incomingEdge)}
+                  className="px-4 py-2 min-h-[42px] rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                >
+                  <UserPlus className="w-3.5 h-3.5" />
+                  <span>Accept Friend</span>
+                </button>
+              ) : friendState === 'outgoing_pending' ? (
+                <button
+                  type="button"
+                  onClick={() => removeOrCancelFriend(targetProfile.uid)}
+                  className="px-4 py-2 min-h-[42px] rounded-full border border-[#d4cfc5] dark:border-[#404040] text-xs font-semibold flex items-center gap-1.5 opacity-80 cursor-pointer"
+                >
+                  <Clock className="w-3.5 h-3.5" />
+                  <span>Requested</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => sendFriendRequest(targetProfile)}
+                  className="px-4 py-2 min-h-[42px] rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                >
+                  <UserPlus className="w-3.5 h-3.5" />
+                  <span>Add Friend</span>
+                </button>
+              )}
+
+              {onMessageUser && (
+                <button
+                  type="button"
+                  onClick={() => onMessageUser(targetProfile)}
+                  className="px-4 py-2 min-h-[42px] rounded-full border border-[#d4cfc5] dark:border-[#404040] text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                >
+                  <MessageCircle className="w-3.5 h-3.5" />
+                  <span>Message</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => toggleFollow(targetProfile)}
+                className="px-4 py-2 min-h-[42px] rounded-full border border-[#d4cfc5] dark:border-[#404040] text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+              >
+                {followStatus === 'accepted' ? 'Following' : followStatus === 'pending' ? 'Follow Requested' : 'Follow'}
+              </button>
+
               <button
                 type="button"
                 onClick={() => {
@@ -254,7 +348,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
                   });
                   onToast(isMuted(targetProfile.uid) ? 'Unmuted user.' : 'Muted user.');
                 }}
-                className="p-2 rounded-control border border-[#d4cfc5] dark:border-[#404040] cursor-pointer"
+                className="w-10 h-10 rounded-control border border-[#d4cfc5] dark:border-[#404040] flex items-center justify-center cursor-pointer"
                 title="Mute user"
               >
                 <VolumeX className="w-4 h-4" />
@@ -269,10 +363,26 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
                   });
                   onToast(isBlocked(targetProfile.uid) ? 'Unblocked user.' : 'Blocked user.');
                 }}
-                className="p-2 rounded-control border border-[#d4cfc5] dark:border-[#404040] text-red-600 dark:text-red-400 cursor-pointer"
+                className="w-10 h-10 rounded-control border border-[#d4cfc5] dark:border-[#404040] text-red-600 dark:text-red-400 flex items-center justify-center cursor-pointer"
                 title="Block user"
               >
                 <Ban className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  await reportItem({
+                    targetType: 'user',
+                    targetId: targetProfile.uid,
+                    targetOwnerId: targetProfile.uid,
+                    reason: 'Profile safety report',
+                  });
+                  onToast('User reported for review.');
+                }}
+                className="w-10 h-10 rounded-control border border-[#d4cfc5] dark:border-[#404040] flex items-center justify-center cursor-pointer"
+                title="Report user"
+              >
+                <Flag className="w-4 h-4" />
               </button>
             </>
           )}
@@ -284,53 +394,57 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
           <Lock className="w-7 h-7 mx-auto opacity-70" />
           <h2 className="font-display font-bold text-lg">This account is private</h2>
           <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8]">
-            Send a follow request to see @{targetProfile.username}&rsquo;s fits and public wardrobe pieces.
+            Add as a friend or send a follow request to view @{targetProfile.username}&rsquo;s posts, wardrobe, and lookbook.
           </p>
         </div>
       ) : (
         <>
           {/* Profile Tabs */}
           <div className="flex flex-wrap gap-1.5">
-            <button
-              type="button"
-              onClick={() => setTab('fits')}
-              className={`px-4 py-2 rounded-control text-xs font-semibold border cursor-pointer ${
-                tab === 'fits'
-                  ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-transparent'
-                  : 'border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424]'
-              }`}
-            >
-              Fits ({profilePosts.length})
-            </button>
-            <button
-              type="button"
-              onClick={() => setTab('wardrobe')}
-              className={`px-4 py-2 rounded-control text-xs font-semibold border cursor-pointer ${
-                tab === 'wardrobe'
-                  ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-transparent'
-                  : 'border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424]'
-              }`}
-            >
-              {isOwn ? `My Wardrobe (${profileWardrobe.length})` : `Visible Wardrobe (${profileWardrobe.length})`}
-            </button>
+            {(
+              [
+                { id: 'posts', label: `Posts (${profilePosts.length})` },
+                {
+                  id: 'wardrobe',
+                  label: isOwn ? `Wardrobe (${profileWardrobe.length})` : `Visible Wardrobe (${profileWardrobe.length})`,
+                },
+                { id: 'lookbook', label: `Lookbook (${profileOutfits.length})` },
+                { id: 'myday', label: `MyDay (${profileStories.length})` },
+                ...(isOwn ? [{ id: 'friends', label: `Friends (${ownFriendProfiles.length})` }] : []),
+              ] as { id: 'posts' | 'wardrobe' | 'lookbook' | 'myday' | 'friends'; label: string }[]
+            ).map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setTab(t.id)}
+                className={`px-4 py-2 min-h-[40px] rounded-control text-xs font-semibold border cursor-pointer ${
+                  tab === t.id
+                    ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-transparent'
+                    : 'border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424]'
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+
             {isOwn && (
               <>
                 <button
                   type="button"
                   onClick={() => setTab('stats')}
-                  className={`px-4 py-2 rounded-control text-xs font-semibold border flex items-center gap-1.5 cursor-pointer ${
+                  className={`px-4 py-2 min-h-[40px] rounded-control text-xs font-semibold border flex items-center gap-1.5 cursor-pointer ${
                     tab === 'stats'
                       ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-transparent'
                       : 'border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424]'
                   }`}
                 >
                   <Lock className="w-3 h-3" />
-                  <span>Style Stats (Private)</span>
+                  <span>Style Stats</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setTab('saved')}
-                  className={`px-4 py-2 rounded-control text-xs font-semibold border flex items-center gap-1.5 cursor-pointer ${
+                  className={`px-4 py-2 min-h-[40px] rounded-control text-xs font-semibold border flex items-center gap-1.5 cursor-pointer ${
                     tab === 'saved'
                       ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-transparent'
                       : 'border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424]'
@@ -343,7 +457,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
             )}
           </div>
 
-          {tab === 'fits' && (
+          {tab === 'posts' && (
             <div className="space-y-4 max-w-2xl">
               {profilePosts.length === 0 ? (
                 <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8]">No shared fits yet.</p>
@@ -362,28 +476,162 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
           )}
 
           {tab === 'wardrobe' && (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3.5">
-              {profileWardrobe.map((item) => (
-                <div
-                  key={item.id}
-                  className="rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] overflow-hidden"
-                >
-                  <div className="aspect-square bg-[#eae7e0] dark:bg-[#171717]">
+            profileWardrobe.length === 0 ? (
+              <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8]">
+                No visible wardrobe items yet.
+              </p>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3.5">
+                {profileWardrobe.map((item) => (
+                  <div
+                    key={item.id}
+                    className="rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] overflow-hidden"
+                  >
+                    <div className="aspect-square bg-[#eae7e0] dark:bg-[#171717]">
+                      <GarmentImage
+                        src={item.thumbUrl || item.imageUrl}
+                        mediaId={item.mediaId}
+                        alt={item.altText || item.name}
+                        isCutout={item.isCutout}
+                      />
+                    </div>
+                    <div className="p-3">
+                      <p className="text-xs font-semibold truncate">{item.name}</p>
+                      <p className="text-[11px] text-[#4e4c46] dark:text-[#c2bfb8] truncate">
+                        {item.brand} · {item.color}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+
+          {tab === 'lookbook' && (
+            profileOutfits.length === 0 ? (
+              <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8]">
+                No visible lookbook outfits yet.
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {profileOutfits.map((outfit) => (
+                  <div
+                    key={outfit.id}
+                    className="rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] overflow-hidden"
+                  >
+                    <div className="aspect-[4/3] bg-[#eae7e0] dark:bg-[#171717]">
+                      <GarmentImage
+                        src={outfit.coverImageUrl}
+                        mediaId={outfit.mediaId}
+                        alt={outfit.name}
+                        fallbackLabel={outfit.name}
+                      />
+                    </div>
+                    <div className="p-3.5 space-y-1">
+                      <span className="px-2 py-0.5 rounded-chip text-[10px] bg-[#eae7e0] dark:bg-[#303030] uppercase">
+                        {outfit.styleCategory}
+                      </span>
+                      <p className="text-sm font-display font-bold truncate">{outfit.name}</p>
+                      {outfit.description && (
+                        <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8] line-clamp-2">
+                          {outfit.description}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+
+          {tab === 'myday' && (
+            profileStories.length === 0 ? (
+              <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8]">
+                No active MyDay stories right now.
+              </p>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3.5">
+                {profileStories.map((st) => (
+                  <button
+                    key={st.id}
+                    type="button"
+                    onClick={() => onViewStory?.(st.userId)}
+                    className="relative aspect-[3/4] rounded-card overflow-hidden border border-[#d4cfc5] dark:border-[#404040] bg-[#171717] text-left cursor-pointer"
+                  >
                     <GarmentImage
-                      src={item.thumbUrl || item.imageUrl}
-                      mediaId={item.mediaId}
-                      alt={item.altText || item.name}
-                      isCutout={item.isCutout}
+                      src={st.mediaUrl}
+                      mediaId={st.mediaId}
+                      alt={st.altText}
+                      className="w-full h-full object-cover"
                     />
-                  </div>
-                  <div className="p-3">
-                    <p className="text-xs font-semibold truncate">{item.name}</p>
-                    <p className="text-[11px] text-[#4e4c46] dark:text-[#c2bfb8] truncate">
-                      {item.brand} · {item.color}
-                    </p>
-                  </div>
+                    <div className="absolute inset-x-0 bottom-0 p-2.5 bg-gradient-to-t from-black/80 to-transparent text-[#f5f4f0]">
+                      <p className="text-xs font-medium line-clamp-2">{st.caption || st.styleTag || 'MyDay'}</p>
+                      <p className="text-[10px] opacity-75 mt-0.5">{formatRelativeTime(st.createdAt)}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )
+          )}
+
+          {tab === 'friends' && isOwn && (
+            <div className="space-y-3">
+              {ownFriendProfiles.length === 0 ? (
+                <div className="p-6 rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] text-center space-y-2">
+                  <Users className="w-7 h-7 mx-auto opacity-60" />
+                  <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8]">
+                    Add friends to unlock Direct Messages and Friends-only fits.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => onNavigate('people')}
+                    className="px-4 py-2 rounded-control bg-[#171717] dark:bg-[#e5e1da] text-[#f5f4f0] dark:text-[#171717] text-xs font-bold cursor-pointer"
+                  >
+                    Find People
+                  </button>
                 </div>
-              ))}
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {ownFriendProfiles.map((f) => (
+                    <div
+                      key={f.uid}
+                      className="p-3.5 rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] flex items-center justify-between gap-2"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => onOpenProfile(f.uid)}
+                        className="flex items-center gap-2.5 min-w-0 text-left cursor-pointer"
+                      >
+                        <AvatarImage src={f.photoURL} name={f.displayName} sizeClass="w-10 h-10" textSizeClass="text-xs" />
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold truncate">{f.displayName}</p>
+                          <p className="text-[11px] text-[#4e4c46] dark:text-[#b0b0b0]">@{f.username}</p>
+                        </div>
+                      </button>
+                      <div className="flex items-center gap-1">
+                        {onMessageUser && (
+                          <button
+                            type="button"
+                            onClick={() => onMessageUser(f)}
+                            aria-label={`Message ${f.displayName}`}
+                            className="w-9 h-9 rounded-control border border-[#d4cfc5] dark:border-[#404040] flex items-center justify-center cursor-pointer"
+                          >
+                            <MessageCircle className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => removeOrCancelFriend(f.uid)}
+                          aria-label={`Remove ${f.displayName}`}
+                          className="w-9 h-9 rounded-control border border-[#d4cfc5] dark:border-[#404040] flex items-center justify-center cursor-pointer"
+                        >
+                          <UserMinus className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 

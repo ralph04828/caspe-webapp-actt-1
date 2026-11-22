@@ -19,15 +19,21 @@ import {
   CloudSun,
   Lock,
   MapPin,
+  Share2,
   Trash2,
 } from 'lucide-react';
 
 interface PlannerPageProps {
   onNavigate: (section: NavSection) => void;
+  onSharePlannedOutfit?: (outfit: Outfit, dateIso: string) => void;
   onToast: (msg: string, type?: 'success' | 'error') => void;
 }
 
-export const PlannerPage: React.FC<PlannerPageProps> = ({ onNavigate, onToast }) => {
+export const PlannerPage: React.FC<PlannerPageProps> = ({
+  onNavigate,
+  onSharePlannedOutfit,
+  onToast,
+}) => {
   const { userProfile, updateAccountProfile } = useAuth();
   const { outfits, wardrobe, schedules, assignSchedule, markScheduleWornToday, removeSchedule } =
     useWardrobe();
@@ -360,6 +366,22 @@ export const PlannerPage: React.FC<PlannerPageProps> = ({ onNavigate, onToast })
                   <CheckCircle2 className="w-4 h-4" />
                   <span>Wore this today</span>
                 </button>
+              )}
+
+              {activeOutfit && onSharePlannedOutfit && (
+                <div className="pt-2 border-t border-[#d4cfc5]/70 dark:border-[#404040]/70 space-y-1">
+                  <button
+                    type="button"
+                    onClick={() => onSharePlannedOutfit(activeOutfit, selectedDate)}
+                    className="w-full py-2 px-3 min-h-[40px] rounded-control border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] text-xs font-semibold flex items-center justify-center gap-1.5 hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer"
+                  >
+                    <Share2 className="w-3.5 h-3.5" />
+                    <span>Share this planned outfit</span>
+                  </button>
+                  <p className="text-[10px] text-[#4e4c46] dark:text-[#b0b0b0] text-center">
+                    Shares an independent copy — your planner stays private.
+                  </p>
+                </div>
               )}
             </div>
           ) : null}

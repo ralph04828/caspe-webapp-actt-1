@@ -5,7 +5,6 @@ import {
   ClothingItem,
   NavSection,
   Outfit,
-  OutfitPieceSnapshot,
   SEASON_TAGS,
   SHOE_CATEGORIES,
   STYLE_CATEGORIES,
@@ -17,16 +16,16 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useWardrobe } from '../context/WardrobeContext';
 import { useSocial } from '../context/SocialContext';
-import { remixOutfitWithAI } from '../services/aiService';
 import { GarmentImage } from './GarmentImage';
+import { ErrorBoundary } from './ErrorBoundary';
 import {
+  AlertCircle,
   AlertTriangle,
   Check,
   Loader2,
   Repeat,
   Save,
   Share2,
-  Sparkles,
   X,
 } from 'lucide-react';
 
@@ -65,9 +64,10 @@ export const FitBuilderPage: React.FC<FitBuilderPageProps> = ({
   const [accessoryIds, setAccessoryIds] = useState<string[]>([]);
 
   const [includeDirty, setIncludeDirty] = useState(false);
-  const [aiRemixing, setAiRemixing] = useState(false);
-  const [aiRemixNote, setAiRemixNote] = useState<string | null>(null);
+  const [swapOpen, setSwapOpen] = useState(false);
+  const [swapSlot, setSwapSlot] = useState<'top' | 'bottom' | 'shoes'>('top');
   const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
     if (editingOutfit) {
@@ -87,7 +87,6 @@ export const FitBuilderPage: React.FC<FitBuilderPageProps> = ({
       setStyleCategory(remixSourcePost.styleTags?.[0] || 'Streetwear');
       setOccasion(remixSourcePost.occasion || 'Remixed Fit');
       setDescription(`Remixed from @${remixSourcePost.authorUsername}`);
-      setAiRemixNote(null);
       // Pre-match clean pieces from user's own wardrobe for each slot!
       const clean = wardrobe.filter((w) => w.laundryStatus === 'clean');
       const pool = clean.length > 0 ? clean : wardrobe;
@@ -119,78 +118,28 @@ export const FitBuilderPage: React.FC<FitBuilderPageProps> = ({
   const dirtyWarnings = [selectedTop, selectedBottom, selectedShoes, ...selectedAccessories]
     .filter((i): i is ClothingItem => Boolean(i && i.laundryStatus !== 'clean'));
 
-  const handleAISwapOnePiece = async () => {
-    const pieces: OutfitPieceSnapshot[] = [];
-    if (remixSourcePost?.piecesPreview?.length) {
-      pieces.push(...remixSourcePost.piecesPreview);
-    } else {
-      if (selectedTop) {
-        pieces.push({
-          id: selectedTop.id,
-          slot: 'top',
-          name: selectedTop.name,
-          category: selectedTop.category,
-          brand: selectedTop.brand,
-          color: selectedTop.color,
-          visibility: selectedTop.visibility,
-        });
-      }
-      if (selectedBottom) {
-        pieces.push({
-          id: selectedBottom.id,
-          slot: 'bottom',
-          name: selectedBottom.name,
-          category: selectedBottom.category,
-          brand: selectedBottom.brand,
-          color: selectedBottom.color,
-          visibility: selectedBottom.visibility,
-        });
-      }
-      if (selectedShoes) {
-        pieces.push({
-          id: selectedShoes.id,
-          slot: 'shoes',
-          name: selectedShoes.name,
-          category: selectedShoes.category,
-          brand: selectedShoes.brand,
-          color: selectedShoes.color,
-          visibility: selectedShoes.visibility,
-        });
-      }
-    }
+  const swapCandidates = swapSlot === 'top' ? tops : swapSlot === 'bottom' ? bottoms : shoes;
 
-    if (wardrobe.length === 0) {
-      onToast('Add garments to My Wardrobe first so AI can swap a piece.', 'error');
-      return;
-    }
-
-    setAiRemixing(true);
-    try {
-      const res = await remixOutfitWithAI(pieces, wardrobe, `Keep ${styleCategory} balance.`);
-      if (res.replacementItemId) {
-        if (res.slotToSwap === 'top') setTopId(res.replacementItemId);
-        else if (res.slotToSwap === 'bottom') setBottomId(res.replacementItemId);
-        else if (res.slotToSwap === 'shoes') setShoesId(res.replacementItemId);
-        else if (!accessoryIds.includes(res.replacementItemId)) {
-          setAccessoryIds((prev) => [...prev, res.replacementItemId]);
-        }
-      }
-      setAiRemixNote(res.rationale || res.replacementSummary);
-      onToast('AI swapped one piece for your remix!');
-    } catch (err: any) {
-      onToast(err?.message || 'AI remix unavailable.', 'error');
-    } finally {
-      setAiRemixing(false);
-    }
+  const handleManualSwapPick = (itemId: string) => {
+    if (swapSlot === 'top') setTopId(itemId);
+    else if (swapSlot === 'bottom') setBottomId(itemId);
+    else setShoesId(itemId);
+    setSwapOpen(false);
+    onToast(`Swapped ${swapSlot} piece.`);
   };
 
   const handleSave = async (shareToFeed: boolean) => {
+    setFormError(null);
     if (!name.trim()) {
-      onToast('Give this outfit a name first.', 'error');
+      const msg = 'Give this outfit a name first.';
+      setFormError(msg);
+      onToast(msg, 'error');
       return;
     }
     if (!topId && !bottomId && !shoesId && accessoryIds.length === 0) {
-      onToast('Select at least one garment for your fit.', 'error');
+      const msg = 'Select at least one garment for your fit.';
+      setFormError(msg);
+      onToast(msg, 'error');
       return;
     }
 
@@ -254,13 +203,17 @@ export const FitBuilderPage: React.FC<FitBuilderPageProps> = ({
         onNavigate('lookbook');
       }
     } catch (err: any) {
-      onToast(err?.message || 'Failed to save outfit.', 'error');
+      const msg = err?.message || 'Failed to save outfit. Your selection is preserved.';
+      console.error('FitBuilder save failed:', err);
+      setFormError(msg);
+      onToast(msg, 'error');
     } finally {
       setSaving(false);
     }
   };
 
   return (
+    <ErrorBoundary title="Fit Builder ran into an issue" onReset={() => setFormError(null)}>
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -281,15 +234,24 @@ export const FitBuilderPage: React.FC<FitBuilderPageProps> = ({
           </label>
           <button
             type="button"
-            onClick={handleAISwapOnePiece}
-            disabled={aiRemixing}
+            onClick={() => setSwapOpen((v) => !v)}
             className="px-4 py-2 rounded-full border border-[#171717] dark:border-[#e5e1da] text-xs font-semibold flex items-center gap-1.5 hover:bg-[#171717] hover:text-[#f5f4f0] dark:hover:bg-[#e5e1da] dark:hover:text-[#171717] transition-colors cursor-pointer"
           >
-            {aiRemixing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-            <span>AI Swap One Piece</span>
+            <Repeat className="w-3.5 h-3.5" />
+            <span>Swap One Piece</span>
           </button>
         </div>
       </div>
+
+      {formError && (
+        <div
+          role="alert"
+          className="p-3 rounded-control border border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300 text-xs flex items-start gap-2"
+        >
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>{formError}</span>
+        </div>
+      )}
 
       {remixSourcePost && (
         <div className="p-4 rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] flex items-center justify-between gap-3">
@@ -322,10 +284,66 @@ export const FitBuilderPage: React.FC<FitBuilderPageProps> = ({
         </div>
       )}
 
-      {aiRemixNote && (
-        <div className="p-3.5 rounded-control border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] text-xs flex items-start gap-2">
-          <Sparkles className="w-4 h-4 shrink-0 mt-0.5" />
-          <span>{aiRemixNote}</span>
+      {swapOpen && (
+        <div className="p-4 rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wider">Swap One Piece</p>
+              <p className="text-[11px] text-[#4e4c46] dark:text-[#b0b0b0]">
+                Pick a slot to swap in a piece from your wardrobe.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSwapOpen(false)}
+              aria-label="Close swap picker"
+              className="p-1.5 rounded-control hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="flex gap-2">
+            {(['top', 'bottom', 'shoes'] as const).map((slot) => (
+              <button
+                key={slot}
+                type="button"
+                onClick={() => setSwapSlot(slot)}
+                className={`px-3 py-1.5 rounded-chip text-xs font-semibold capitalize border cursor-pointer ${
+                  swapSlot === slot
+                    ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-transparent'
+                    : 'border-[#d4cfc5] dark:border-[#404040]'
+                }`}
+              >
+                {slot}
+              </button>
+            ))}
+          </div>
+          {swapCandidates.length === 0 ? (
+            <p className="text-xs text-[#4e4c46] dark:text-[#b0b0b0]">
+              No {swapSlot} items available in your clean wardrobe pool.
+            </p>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 max-h-52 overflow-y-auto">
+              {swapCandidates.map((cand) => (
+                <button
+                  key={cand.id}
+                  type="button"
+                  onClick={() => handleManualSwapPick(cand.id)}
+                  className="p-2 rounded-control border border-[#d4cfc5] dark:border-[#404040] hover:border-[#171717] dark:hover:border-[#e5e1da] text-left cursor-pointer"
+                >
+                  <div className="aspect-square rounded-chip overflow-hidden bg-[#eae7e0] dark:bg-[#171717] mb-1.5">
+                    <GarmentImage
+                      src={cand.thumbUrl || cand.imageUrl}
+                      mediaId={cand.mediaId}
+                      alt={cand.name}
+                      isCutout={cand.isCutout}
+                    />
+                  </div>
+                  <p className="text-[11px] font-semibold truncate">{cand.name}</p>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -409,6 +427,7 @@ export const FitBuilderPage: React.FC<FitBuilderPageProps> = ({
                   className="w-full px-3 py-2 rounded-control text-xs bg-[#f5f4f0] dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
                 >
                   <option value="public">Public</option>
+                  <option value="friends">Friends</option>
                   <option value="followers">Followers</option>
                   <option value="private">Private</option>
                 </select>
@@ -474,19 +493,19 @@ export const FitBuilderPage: React.FC<FitBuilderPageProps> = ({
                 type="button"
                 disabled={saving}
                 onClick={() => handleSave(false)}
-                className="py-2.5 px-3 rounded-full border border-[#171717] dark:border-[#e5e1da] text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
+                className="py-2.5 px-3 rounded-full border border-[#171717] dark:border-[#e5e1da] text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
               >
-                <Save className="w-3.5 h-3.5" />
-                <span>Save Lookbook</span>
+                {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                <span>{saving ? 'Saving...' : 'Save Lookbook'}</span>
               </button>
               <button
                 type="button"
                 disabled={saving}
                 onClick={() => handleSave(true)}
-                className="py-2.5 px-3 rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
+                className="py-2.5 px-3 rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
               >
-                <Share2 className="w-3.5 h-3.5" />
-                <span>Save & Share</span>
+                {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Share2 className="w-3.5 h-3.5" />}
+                <span>{saving ? 'Sharing...' : 'Save & Share'}</span>
               </button>
             </div>
           </div>
@@ -583,5 +602,6 @@ export const FitBuilderPage: React.FC<FitBuilderPageProps> = ({
         </section>
       </div>
     </div>
+    </ErrorBoundary>
   );
 };

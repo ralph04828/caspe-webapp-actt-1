@@ -13,9 +13,9 @@ export default defineConfig(() => {
         registerType: 'autoUpdate',
         includeAssets: ['favicon.ico', 'icon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png'],
         manifest: {
-          name: 'SWOOOSH — Style, Wardrobe & AI Stylist',
+          name: 'SWOOOSH — Fashion Social Network & Digital Wardrobe',
           short_name: 'SWOOOSH',
-          description: 'PLAN. ORGANIZE. WEAR. · SHARE YOUR FIT. Fashion social network, digital wardrobe, and personal AI stylist.',
+          description: 'SWOOOSH is a fashion social network: share your fits, build your wardrobe, plan your outfits, and connect with friends.',
           theme_color: '#171717',
           background_color: '#171717',
           display: 'standalone',
@@ -44,7 +44,6 @@ export default defineConfig(() => {
         workbox: {
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           globPatterns: ['**/*.{js,css,html,ico,png,svg,jpg,webp,woff2}'],
-          navigateFallbackDenylist: [/^\/api\//, /^\/share\//],
           runtimeCaching: [
             {
               urlPattern: /^https:\/\/api\.open-meteo\.com\/.*/i,
@@ -83,6 +82,8 @@ export default defineConfig(() => {
       },
     },
     server: {
+      port: 3000,
+      host: '0.0.0.0',
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify—file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',

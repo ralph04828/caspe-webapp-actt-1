@@ -1,11 +1,14 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { CLOTHING_CATEGORIES, STYLE_CATEGORIES, Visibility, WishlistItem } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useWardrobe } from '../context/WardrobeContext';
 import { preparePreviewDataUrl, uploadImageAsset } from '../services/storageService';
 import { GarmentImage } from './GarmentImage';
 import { VisibilityBadge } from './VisibilityBadge';
-import { Plus, CheckCircle2, Trash2, ArrowRightCircle, Upload, X } from 'lucide-react';
+import { PhotoCropState, PhotoEditorModal, createDefaultCropState } from './PhotoEditorModal';
+import { DiscardDraftDialog } from './DiscardDraftDialog';
+import { ErrorBoundary } from './ErrorBoundary';
+import { AlertCircle, Plus, CheckCircle2, Trash2, ArrowRightCircle, Upload, X, Crop } from 'lucide-react';
 
 interface WishlistPageProps {
   onToast: (msg: string, type?: 'success' | 'error') => void;
@@ -26,32 +29,73 @@ export const WishlistPage: React.FC<WishlistPageProps> = ({ onToast }) => {
   const [priority, setPriority] = useState<'low' | 'medium' | 'high'>('medium');
   const [visibility, setVisibility] = useState<Visibility>('private');
   const [notes, setNotes] = useState('');
+  const [rawPhotoUrl, setRawPhotoUrl] = useState<string | null>(null);
   const [photoDataUrl, setPhotoDataUrl] = useState<string | null>(null);
+  const [cropState, setCropState] = useState<PhotoCropState | null>(null);
+  const [cropModalOpen, setCropModalOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [modalError, setModalError] = useState<string | null>(null);
+  const [discardOpen, setDiscardOpen] = useState(false);
 
   const filtered = wishlist.filter((w) => (filterStatus === 'all' ? true : w.status === filterStatus));
 
+  const hasUnsavedDraft = useMemo(
+    () => Boolean(name.trim() || brand.trim() || notes.trim() || photoDataUrl || rawPhotoUrl),
+    [name, brand, notes, photoDataUrl, rawPhotoUrl]
+  );
+
+  const resetModal = () => {
+    setName('');
+    setBrand('');
+    setNotes('');
+    setRawPhotoUrl(null);
+    setPhotoDataUrl(null);
+    setCropState(null);
+    setCropModalOpen(false);
+    setModalError(null);
+    setDiscardOpen(false);
+    setModalOpen(false);
+  };
+
+  const attemptCloseModal = () => {
+    if (saving) return;
+    if (hasUnsavedDraft) {
+      setDiscardOpen(true);
+      return;
+    }
+    resetModal();
+  };
+
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
+    setModalError(null);
     try {
       const compressedDataUrl = await preparePreviewDataUrl(file);
-      setPhotoDataUrl(compressedDataUrl);
+      setRawPhotoUrl(compressedDataUrl);
+      setCropState(createDefaultCropState('1:1'));
+      setCropModalOpen(true);
     } catch (err: any) {
-      onToast(err?.message || 'Could not process image file.', 'error');
+      const msg = err?.message || 'Could not process image file.';
+      console.error('Wishlist photo load failed:', err);
+      setModalError(msg);
+      onToast(msg, 'error');
     }
   };
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!userProfile || !name.trim()) return;
+    if (!userProfile || !name.trim() || saving) return;
     setSaving(true);
+    setModalError(null);
     try {
       let imageUrl: string | undefined;
       let thumbUrl: string | undefined;
       let mediaId: string | undefined;
-      if (photoDataUrl) {
-        const uploaded = await uploadImageAsset(photoDataUrl, userProfile.uid, visibility, isDemoMode);
+      const activePhoto = photoDataUrl || rawPhotoUrl;
+      if (activePhoto) {
+        const uploaded = await uploadImageAsset(activePhoto, userProfile.uid, visibility, isDemoMode);
         imageUrl = uploaded.imageUrl;
         thumbUrl = uploaded.thumbUrl;
         mediaId = uploaded.mediaId;
@@ -75,14 +119,13 @@ export const WishlistPage: React.FC<WishlistPageProps> = ({ onToast }) => {
         mediaId,
       });
 
-      setName('');
-      setBrand('');
-      setNotes('');
-      setPhotoDataUrl(null);
-      setModalOpen(false);
+      resetModal();
       onToast('Added to Wishlist.');
     } catch (err: any) {
-      onToast(err?.message || 'Could not add wishlist item.', 'error');
+      const msg = err?.message || 'Could not add wishlist item.';
+      console.error('Wishlist save failed:', err);
+      setModalError(msg);
+      onToast(msg, 'error');
     } finally {
       setSaving(false);
     }
@@ -243,6 +286,9 @@ export const WishlistPage: React.FC<WishlistPageProps> = ({ onToast }) => {
           role="dialog"
           aria-modal="true"
           aria-labelledby="wishlist-modal-title"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) attemptCloseModal();
+          }}
         >
           <div className="w-full max-w-md rounded-modal bg-[#f5f4f0] dark:bg-[#242424] border border-[#d4cfc5] dark:border-[#404040] p-6 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between">
@@ -251,7 +297,7 @@ export const WishlistPage: React.FC<WishlistPageProps> = ({ onToast }) => {
               </h2>
               <button
                 type="button"
-                onClick={() => setModalOpen(false)}
+                onClick={attemptCloseModal}
                 aria-label="Close modal"
                 className="p-2 rounded-control hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer"
               >
@@ -259,128 +305,185 @@ export const WishlistPage: React.FC<WishlistPageProps> = ({ onToast }) => {
               </button>
             </div>
 
-            <form onSubmit={handleAdd} className="space-y-3.5">
-              {photoDataUrl ? (
-                <div className="relative h-36 rounded-card overflow-hidden border border-[#d4cfc5] dark:border-[#404040]">
-                  <GarmentImage src={photoDataUrl} alt="Wishlist preview" />
-                  <button
-                    type="button"
-                    onClick={() => setPhotoDataUrl(null)}
-                    className="absolute top-2 right-2 p-1 rounded-full bg-black/70 text-white cursor-pointer"
+            <ErrorBoundary title="Wishlist editor ran into an issue" onReset={() => setModalError(null)}>
+              <form onSubmit={handleAdd} className="space-y-3.5">
+                {modalError && (
+                  <div
+                    role="alert"
+                    className="p-3 rounded-control border border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300 text-xs flex items-start gap-2"
                   >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              ) : (
-                <label className="flex items-center justify-center gap-2 p-3.5 rounded-control border border-dashed border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#171717] text-xs cursor-pointer">
-                  <Upload className="w-4 h-4" />
-                  <span>Upload reference photo (optional)</span>
-                  <input type="file" accept="image/*" onChange={handleFile} className="sr-only" />
-                </label>
-              )}
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>{modalError}</span>
+                  </div>
+                )}
 
-              <input
-                type="text"
-                required
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Piece name (e.g., Pleated Wide Wool Trousers)"
-                className="w-full px-3 py-2 rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
-              />
-
-              <div className="grid grid-cols-2 gap-2">
-                <input
-                  type="text"
-                  value={brand}
-                  onChange={(e) => setBrand(e.target.value)}
-                  placeholder="Brand / Studio"
-                  className="w-full px-3 py-2 rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
-                />
-                <select
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value)}
-                  className="w-full px-3 py-2 rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
-                >
-                  {CLOTHING_CATEGORIES.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <input
-                  type="text"
-                  value={colorInput}
-                  onChange={(e) => setColorInput(e.target.value)}
-                  placeholder="Colors (Charcoal, Bone)"
-                  className="w-full px-3 py-2 rounded-control text-xs bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
-                />
-                <select
-                  value={priority}
-                  onChange={(e) => setPriority(e.target.value as any)}
-                  className="w-full px-3 py-2 rounded-control text-xs bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
-                >
-                  <option value="high">High priority</option>
-                  <option value="medium">Medium priority</option>
-                  <option value="low">Low priority</option>
-                </select>
-              </div>
-
-              <div className="flex flex-wrap gap-1">
-                {STYLE_CATEGORIES.slice(0, 5).map((tag) => {
-                  const active = styleTags.includes(tag);
-                  return (
+                {(photoDataUrl || rawPhotoUrl) ? (
+                  <div className="relative h-36 rounded-card overflow-hidden border border-[#d4cfc5] dark:border-[#404040]">
+                    <GarmentImage src={photoDataUrl || rawPhotoUrl || ''} alt="Wishlist preview" />
+                    {rawPhotoUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setCropModalOpen(true)}
+                        className="absolute bottom-2 left-2 px-2.5 py-1 rounded-chip bg-black/75 text-white text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer hover:bg-black"
+                      >
+                        <Crop className="w-3 h-3" />
+                        <span>Edit Crop</span>
+                      </button>
+                    )}
                     <button
-                      key={tag}
                       type="button"
-                      onClick={() =>
-                        setStyleTags((prev) =>
-                          prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]
-                        )
-                      }
-                      className={`px-2 py-1 rounded-chip text-[11px] border cursor-pointer ${
-                        active
-                          ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717]'
-                          : 'border-[#d4cfc5] dark:border-[#404040]'
-                      }`}
+                      onClick={() => {
+                        setRawPhotoUrl(null);
+                        setPhotoDataUrl(null);
+                        setCropState(null);
+                      }}
+                      aria-label="Remove reference photo"
+                      className="absolute top-2 right-2 p-1 rounded-full bg-black/70 text-white cursor-pointer"
                     >
-                      {tag}
+                      <X className="w-3.5 h-3.5" />
                     </button>
-                  );
-                })}
-              </div>
+                  </div>
+                ) : (
+                  <label className="flex items-center justify-center gap-2 p-3.5 rounded-control border border-dashed border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#171717] text-xs cursor-pointer">
+                    <Upload className="w-4 h-4" />
+                    <span>Upload reference photo (optional)</span>
+                    <input type="file" accept="image/*" onChange={handleFile} className="sr-only" />
+                  </label>
+                )}
 
-              <select
-                value={visibility}
-                onChange={(e) => setVisibility(e.target.value as Visibility)}
-                className="w-full px-3 py-2 rounded-control text-xs bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
-              >
-                <option value="private">Private (Default — only visible to you)</option>
-                <option value="followers">Followers</option>
-                <option value="public">Public</option>
-              </select>
+                <input
+                  type="text"
+                  required
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Piece name (e.g., Pleated Wide Wool Trousers)"
+                  className="w-full px-3 py-2 rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+                />
 
-              <textarea
-                rows={2}
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="How this fits into your rotation..."
-                className="w-full px-3 py-2 rounded-control text-xs bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
-              />
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="text"
+                    value={brand}
+                    onChange={(e) => setBrand(e.target.value)}
+                    placeholder="Brand / Studio"
+                    className="w-full px-3 py-2 rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+                  />
+                  <select
+                    value={category}
+                    onChange={(e) => setCategory(e.target.value)}
+                    className="w-full px-3 py-2 rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+                  >
+                    {CLOTHING_CATEGORIES.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
-              <button
-                type="submit"
-                disabled={saving}
-                className="w-full py-2.5 px-4 rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-semibold cursor-pointer disabled:opacity-50"
-              >
-                {saving ? 'Saving...' : 'Save to Wishlist'}
-              </button>
-            </form>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="text"
+                    value={colorInput}
+                    onChange={(e) => setColorInput(e.target.value)}
+                    placeholder="Colors (Charcoal, Bone)"
+                    className="w-full px-3 py-2 rounded-control text-xs bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+                  />
+                  <select
+                    value={priority}
+                    onChange={(e) => setPriority(e.target.value as any)}
+                    className="w-full px-3 py-2 rounded-control text-xs bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+                  >
+                    <option value="high">High priority</option>
+                    <option value="medium">Medium priority</option>
+                    <option value="low">Low priority</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-wrap gap-1">
+                  {STYLE_CATEGORIES.slice(0, 5).map((tag) => {
+                    const active = styleTags.includes(tag);
+                    return (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() =>
+                          setStyleTags((prev) =>
+                            prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]
+                          )
+                        }
+                        className={`px-2 py-1 rounded-chip text-[11px] border cursor-pointer ${
+                          active
+                            ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717]'
+                            : 'border-[#d4cfc5] dark:border-[#404040]'
+                        }`}
+                      >
+                        {tag}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <select
+                  value={visibility}
+                  onChange={(e) => setVisibility(e.target.value as Visibility)}
+                  className="w-full px-3 py-2 rounded-control text-xs bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+                >
+                  <option value="private">Private (Default — only visible to you)</option>
+                  <option value="followers">Followers</option>
+                  <option value="public">Public</option>
+                </select>
+
+                <textarea
+                  rows={2}
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="How this fits into your rotation..."
+                  className="w-full px-3 py-2 rounded-control text-xs bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+                />
+
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="w-full py-2.5 px-4 rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-semibold cursor-pointer disabled:opacity-50"
+                >
+                  {saving ? 'Saving...' : 'Save to Wishlist'}
+                </button>
+              </form>
+            </ErrorBoundary>
           </div>
         </div>
       )}
+
+      <PhotoEditorModal
+        open={cropModalOpen && Boolean(rawPhotoUrl)}
+        sourceUrl={rawPhotoUrl || ''}
+        initialCrop={cropState}
+        defaultAspect="1:1"
+        allowAspectSwitch={true}
+        title="Crop Wishlist Photo"
+        subtitle="Frame your inspiration piece, then tap Done to keep it in your item."
+        doneLabel="Done"
+        onCancel={() => setCropModalOpen(false)}
+        onChangePhotoFile={async (file) => {
+          const compressed = await preparePreviewDataUrl(file);
+          setRawPhotoUrl(compressed);
+          setCropState(createDefaultCropState('1:1'));
+        }}
+        onDone={({ croppedDataUrl, cropState: nextCrop }) => {
+          setPhotoDataUrl(croppedDataUrl);
+          setCropState(nextCrop);
+          setCropModalOpen(false);
+        }}
+      />
+
+      <DiscardDraftDialog
+        open={discardOpen}
+        title="Discard wishlist item?"
+        description="You have unsaved wishlist details or photos. Discarding will clear your draft."
+        onKeep={() => setDiscardOpen(false)}
+        onDiscard={resetModal}
+      />
     </div>
   );
 };

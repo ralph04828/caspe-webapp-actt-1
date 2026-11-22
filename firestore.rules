@@ -22,90 +22,161 @@ service cloud.firestore {
       return resource.data;
     }
 
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidUsernameId(u) {
+      return u is string && u.size() >= 3 && u.size() <= 24 && u.matches('^[a-z0-9._]+$');
+    }
+
+    function friendshipDocId(uidA, uidB) {
+      return uidA < uidB ? (uidA + '_' + uidB) : (uidB + '_' + uidA);
+    }
+
+    function isFriendOf(targetUserId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/friendships/$(friendshipDocId(request.auth.uid, targetUserId))) &&
+        get(/databases/$(database)/documents/friendships/$(friendshipDocId(request.auth.uid, targetUserId))).data.status == 'accepted';
+    }
+
     function isFollowerOf(targetUserId) {
       return isSignedIn() &&
         exists(/databases/$(database)/documents/follows/$(request.auth.uid + '_' + targetUserId)) &&
         get(/databases/$(database)/documents/follows/$(request.auth.uid + '_' + targetUserId)).data.status == 'accepted';
     }
 
-    function isValidId(id) {
-      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
-    }
-
     function canViewVisibility(ownerId, visibility) {
       return isOwner(ownerId) ||
         visibility == 'public' ||
-        (visibility == 'followers' && isFollowerOf(ownerId));
+        (visibility == 'friends' && isFriendOf(ownerId)) ||
+        (visibility == 'followers' && (isFollowerOf(ownerId) || isFriendOf(ownerId)));
     }
 
     function parentMedia(mediaId) {
       return get(/databases/$(database)/documents/media/$(mediaId)).data;
     }
 
+    function canAccessConversation(convId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/conversations/$(convId)) &&
+        request.auth.uid in get(/databases/$(database)/documents/conversations/$(convId)).data.participantIds;
+    }
+
+    function canReadMediaAsset(data) {
+      return canViewVisibility(data.ownerId, data.visibility) ||
+        ('conversationId' in data && data.conversationId is string && canAccessConversation(data.conversationId));
+    }
+
+    function isValidUserProfile(data) {
+      return data.uid is string &&
+        data.uid.size() >= 1 &&
+        data.uid.size() <= 128 &&
+        data.displayName is string &&
+        data.displayName.size() >= 1 &&
+        data.displayName.size() <= 80 &&
+        data.username is string &&
+        data.username.size() >= 3 &&
+        data.username.size() <= 24 &&
+        isValidUsernameId(data.usernameLower) &&
+        data.username == data.usernameLower &&
+        data.isPublic is bool &&
+        (!('birthday' in data) || data.birthday == null) &&
+        (!('bio' in data) || data.bio == null || (data.bio is string && data.bio.size() <= 300)) &&
+        (!('pronouns' in data) || data.pronouns == null || (data.pronouns is string && data.pronouns.size() <= 40)) &&
+        (!('location' in data) || data.location == null || (data.location is string && data.location.size() <= 80)) &&
+        (!('onboardingCompleted' in data) || data.onboardingCompleted == null || data.onboardingCompleted is bool) &&
+        (!('onboardingStep' in data) || data.onboardingStep == null || data.onboardingStep in [1, 2, 3, 'reaction', 'friends']);
+    }
+
+    function isValidMediaAsset(mediaId, data) {
+      return isValidId(mediaId) &&
+        data.ownerId == request.auth.uid &&
+        data.id == mediaId &&
+        data.visibility in ['public', 'friends', 'followers', 'private'] &&
+        data.contentType in ['image/webp', 'image/jpeg', 'image/png'] &&
+        data.width is int &&
+        data.width > 0 &&
+        data.width <= 1000 &&
+        data.height is int &&
+        data.height > 0 &&
+        data.height <= 1000 &&
+        data.thumbWidth is int &&
+        data.thumbWidth > 0 &&
+        data.thumbWidth <= 256 &&
+        data.thumbHeight is int &&
+        data.thumbHeight > 0 &&
+        data.thumbHeight <= 256 &&
+        data.byteSize is int &&
+        data.byteSize > 0 &&
+        data.byteSize <= 780000 &&
+        data.fullDataUrl is string &&
+        data.thumbDataUrl is string &&
+        (!('conversationId' in data) || data.conversationId == null || (data.conversationId is string && isValidId(data.conversationId) && canAccessConversation(data.conversationId)));
+    }
+
     // User Profiles
     match /users/{userId} {
       allow read: if isSignedIn();
       allow create: if isOwner(userId) &&
+        isValidId(userId) &&
         incoming().uid == request.auth.uid &&
-        incoming().usernameLower is string &&
-        incoming().usernameLower.size() >= 3 &&
-        incoming().usernameLower.size() <= 24;
+        isValidUserProfile(incoming()) &&
+        existsAfter(/databases/$(database)/documents/usernames/$(incoming().usernameLower)) &&
+        getAfter(/databases/$(database)/documents/usernames/$(incoming().usernameLower)).data.uid == request.auth.uid;
       allow update: if isSignedIn() && (
-        isOwner(userId) ||
-        incoming().diff(existing()).affectedKeys().hasOnly(['followersCount', 'followingCount', 'postsCount'])
+        (isOwner(userId) &&
+          incoming().uid == existing().uid &&
+          isValidUserProfile(incoming()) &&
+          (incoming().usernameLower == existing().usernameLower ||
+            (existsAfter(/databases/$(database)/documents/usernames/$(incoming().usernameLower)) &&
+              getAfter(/databases/$(database)/documents/usernames/$(incoming().usernameLower)).data.uid == request.auth.uid))) ||
+        incoming().diff(existing()).affectedKeys().hasOnly(['followersCount', 'followingCount', 'postsCount', 'friendsCount'])
       );
       allow delete: if isOwner(userId);
     }
 
-    // Unique Username Registry
+    // Owner-only private user fields (e.g. optional birthday for 13+ verification)
+    match /userPrivate/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if false;
+      allow create, update: if isOwner(userId) &&
+        isValidId(userId) &&
+        incoming().uid == request.auth.uid;
+      allow delete: if isOwner(userId) && isValidId(userId);
+    }
+
+    // Unique Username Registry (paired with users/{uid} so username uniqueness cannot be bypassed)
     match /usernames/{usernameLower} {
-      allow get: if true;
+      allow get: if isValidUsernameId(usernameLower);
+      allow list: if false;
       allow create: if isSignedIn() &&
+        isValidUsernameId(usernameLower) &&
         incoming().uid == request.auth.uid &&
-        usernameLower.size() >= 3 &&
-        usernameLower.size() <= 24;
+        incoming().usernameLower == usernameLower &&
+        existsAfter(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.usernameLower == usernameLower;
       allow delete: if isSignedIn() && existing().uid == request.auth.uid;
     }
 
     // Compressed WebP Media Assets (Firestore image storage, <1 MiB per doc)
     match /media/{mediaId} {
-      allow get: if canViewVisibility(existing().ownerId, existing().visibility);
+      allow get: if isValidId(mediaId) && canReadMediaAsset(existing());
       allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
-      allow create: if isSignedIn() &&
-        isValidId(mediaId) &&
-        incoming().ownerId == request.auth.uid &&
-        incoming().id == mediaId &&
-        incoming().visibility in ['public', 'followers', 'private'] &&
-        incoming().contentType in ['image/webp', 'image/jpeg', 'image/png'] &&
-        incoming().width is int &&
-        incoming().width > 0 &&
-        incoming().width <= 1000 &&
-        incoming().height is int &&
-        incoming().height > 0 &&
-        incoming().height <= 1000 &&
-        incoming().thumbWidth is int &&
-        incoming().thumbWidth > 0 &&
-        incoming().thumbWidth <= 256 &&
-        incoming().thumbHeight is int &&
-        incoming().thumbHeight > 0 &&
-        incoming().thumbHeight <= 256 &&
-        incoming().byteSize is int &&
-        incoming().byteSize > 0 &&
-        incoming().byteSize <= 780000 &&
-        incoming().fullDataUrl is string &&
-        incoming().thumbDataUrl is string;
+      allow create: if isSignedIn() && isValidMediaAsset(mediaId, incoming());
       allow update: if isSignedIn() &&
+        isValidId(mediaId) &&
         existing().ownerId == request.auth.uid &&
         incoming().ownerId == existing().ownerId &&
-        incoming().visibility in ['public', 'followers', 'private'] &&
+        incoming().visibility in ['public', 'friends', 'followers', 'private'] &&
         incoming().diff(existing()).affectedKeys().hasOnly(['visibility', 'updatedAt']);
-      allow delete: if isSignedIn() && existing().ownerId == request.auth.uid;
+      allow delete: if isSignedIn() && isValidId(mediaId) && existing().ownerId == request.auth.uid;
 
       // Chunk subcollection for edge cases where full WebP exceeds single-doc threshold
       match /chunks/{chunkId} {
         allow get: if chunkId.matches('^[0-9]+$') &&
           exists(/databases/$(database)/documents/media/$(mediaId)) &&
-          canViewVisibility(parentMedia(mediaId).ownerId, parentMedia(mediaId).visibility);
+          canReadMediaAsset(parentMedia(mediaId));
         allow list: if isSignedIn() &&
           exists(/databases/$(database)/documents/media/$(mediaId)) &&
           parentMedia(mediaId).ownerId == request.auth.uid;
@@ -128,130 +199,348 @@ service cloud.firestore {
 
     // Digital Wardrobe
     match /wardrobe/{itemId} {
-      allow read: if canViewVisibility(existing().userId, existing().visibility);
-      allow create: if isSignedIn() && incoming().userId == request.auth.uid && incoming().name is string && incoming().name.size() <= 140;
-      allow update: if isSignedIn() && existing().userId == request.auth.uid && incoming().userId == existing().userId;
-      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+      allow get: if isValidId(itemId) && canViewVisibility(existing().userId, existing().visibility);
+      allow list: if canViewVisibility(existing().userId, existing().visibility);
+      allow create: if isSignedIn() &&
+        isValidId(itemId) &&
+        incoming().userId == request.auth.uid &&
+        incoming().name is string &&
+        incoming().name.size() >= 1 &&
+        incoming().name.size() <= 140 &&
+        incoming().visibility in ['public', 'friends', 'followers', 'private'];
+      allow update: if isSignedIn() &&
+        isValidId(itemId) &&
+        existing().userId == request.auth.uid &&
+        incoming().userId == existing().userId &&
+        incoming().name is string &&
+        incoming().name.size() >= 1 &&
+        incoming().name.size() <= 140 &&
+        incoming().visibility in ['public', 'friends', 'followers', 'private'];
+      allow delete: if isSignedIn() && isValidId(itemId) && existing().userId == request.auth.uid;
     }
 
     // Outfits & Lookbook
     match /outfits/{outfitId} {
-      allow read: if canViewVisibility(existing().userId, existing().visibility);
-      allow create: if isSignedIn() && incoming().userId == request.auth.uid && incoming().name is string && incoming().name.size() <= 140;
-      allow update: if isSignedIn() && existing().userId == request.auth.uid && incoming().userId == existing().userId;
-      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+      allow get: if isValidId(outfitId) && canViewVisibility(existing().userId, existing().visibility);
+      allow list: if canViewVisibility(existing().userId, existing().visibility);
+      allow create: if isSignedIn() &&
+        isValidId(outfitId) &&
+        incoming().userId == request.auth.uid &&
+        incoming().name is string &&
+        incoming().name.size() >= 1 &&
+        incoming().name.size() <= 140 &&
+        incoming().visibility in ['public', 'friends', 'followers', 'private'];
+      allow update: if isSignedIn() &&
+        isValidId(outfitId) &&
+        existing().userId == request.auth.uid &&
+        incoming().userId == existing().userId &&
+        incoming().name is string &&
+        incoming().name.size() >= 1 &&
+        incoming().name.size() <= 140 &&
+        incoming().visibility in ['public', 'friends', 'followers', 'private'];
+      allow delete: if isSignedIn() && isValidId(outfitId) && existing().userId == request.auth.uid;
     }
 
     // Social Feed Posts
     match /posts/{postId} {
-      allow read: if canViewVisibility(existing().userId, existing().visibility);
-      allow create: if isSignedIn() && incoming().userId == request.auth.uid && incoming().caption is string && incoming().caption.size() <= 1000;
-      allow update: if isSignedIn() && (
-        (existing().userId == request.auth.uid && incoming().userId == existing().userId) ||
+      allow get: if isValidId(postId) && canViewVisibility(existing().userId, existing().visibility);
+      allow list: if canViewVisibility(existing().userId, existing().visibility);
+      allow create: if isSignedIn() &&
+        isValidId(postId) &&
+        incoming().userId == request.auth.uid &&
+        incoming().postType in ['outfit', 'piece', 'ootd'] &&
+        (!('caption' in incoming()) || incoming().caption == null || (incoming().caption is string && incoming().caption.size() <= 1000)) &&
+        (!('outfitId' in incoming()) || incoming().outfitId == null || incoming().outfitId is string) &&
+        (!('itemId' in incoming()) || incoming().itemId == null || incoming().itemId is string) &&
+        (!('mediaUrl' in incoming()) || incoming().mediaUrl == null || incoming().mediaUrl is string) &&
+        (!('occasion' in incoming()) || incoming().occasion == null || incoming().occasion is string) &&
+        incoming().visibility in ['public', 'friends', 'followers', 'private'];
+      allow update: if isSignedIn() && isValidId(postId) && (
+        (existing().userId == request.auth.uid &&
+          incoming().userId == existing().userId &&
+          (!('caption' in incoming()) || incoming().caption == null || (incoming().caption is string && incoming().caption.size() <= 1000)) &&
+          (!('outfitId' in incoming()) || incoming().outfitId == null || incoming().outfitId is string) &&
+          (!('itemId' in incoming()) || incoming().itemId == null || incoming().itemId is string) &&
+          (!('mediaUrl' in incoming()) || incoming().mediaUrl == null || incoming().mediaUrl is string) &&
+          (!('occasion' in incoming()) || incoming().occasion == null || incoming().occasion is string) &&
+          incoming().visibility in ['public', 'friends', 'followers', 'private']) ||
         incoming().diff(existing()).affectedKeys().hasOnly(['likesCount', 'commentsCount', 'savesCount', 'remixesCount'])
       );
-      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+      allow delete: if isSignedIn() && isValidId(postId) && existing().userId == request.auth.uid;
     }
 
     // Likes
     match /postLikes/{likeId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
-      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(likeId) && incoming().userId == request.auth.uid;
+      allow delete: if isSignedIn() && isValidId(likeId) && existing().userId == request.auth.uid;
     }
 
-    // Saves (private to the saver)
+    // Saves (strictly private to the saver)
     match /postSaves/{saveId} {
       allow read: if isSignedIn() && existing().userId == request.auth.uid;
-      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
-      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(saveId) && incoming().userId == request.auth.uid;
+      allow delete: if isSignedIn() && isValidId(saveId) && existing().userId == request.auth.uid;
     }
 
-    // Comments (with optional compact media attachment references)
+    // Comments (with optional reply attribution and compact media attachment references)
     match /comments/{commentId} {
       allow read: if isSignedIn();
       allow create: if isSignedIn() &&
+        isValidId(commentId) &&
         incoming().userId == request.auth.uid &&
+        incoming().postId is string &&
+        incoming().postId.size() <= 128 &&
         incoming().text is string &&
         incoming().text.size() >= 1 &&
         incoming().text.size() <= 1000 &&
-        (!('imageUrl' in incoming()) || (incoming().imageUrl is string && incoming().imageUrl.size() <= 160)) &&
-        (!('thumbUrl' in incoming()) || (incoming().thumbUrl is string && incoming().thumbUrl.size() <= 160)) &&
-        (!('mediaId' in incoming()) || (incoming().mediaId is string && incoming().mediaId.size() <= 128)) &&
-        (!('altText' in incoming()) || (incoming().altText is string && incoming().altText.size() <= 240));
-      allow delete: if isSignedIn() && (existing().userId == request.auth.uid || existing().postAuthorId == request.auth.uid);
+        (!('imageUrl' in incoming()) || incoming().imageUrl == null || (incoming().imageUrl is string && incoming().imageUrl.size() <= 160)) &&
+        (!('thumbUrl' in incoming()) || incoming().thumbUrl == null || (incoming().thumbUrl is string && incoming().thumbUrl.size() <= 160)) &&
+        (!('mediaId' in incoming()) || incoming().mediaId == null || (incoming().mediaId is string && incoming().mediaId.size() <= 128)) &&
+        (!('altText' in incoming()) || incoming().altText == null || (incoming().altText is string && incoming().altText.size() <= 240));
+      allow delete: if isSignedIn() &&
+        isValidId(commentId) &&
+        (existing().userId == request.auth.uid || existing().postAuthorId == request.auth.uid);
+    }
+
+    // Friendships & Friend Requests (deterministic sorted uidA_uidB key)
+    match /friendships/{friendshipId} {
+      allow get: if isSignedIn() && isValidId(friendshipId) && request.auth.uid in existing().users;
+      allow list: if isSignedIn() && request.auth.uid in existing().users;
+      allow create: if isSignedIn() &&
+        isValidId(friendshipId) &&
+        incoming().id == friendshipId &&
+        incoming().requesterId == request.auth.uid &&
+        incoming().recipientId is string &&
+        incoming().recipientId != request.auth.uid &&
+        incoming().status == 'pending' &&
+        incoming().users is list &&
+        incoming().users.size() == 2 &&
+        request.auth.uid in incoming().users &&
+        incoming().recipientId in incoming().users &&
+        friendshipId == friendshipDocId(incoming().requesterId, incoming().recipientId);
+      allow update: if isSignedIn() &&
+        isValidId(friendshipId) &&
+        existing().recipientId == request.auth.uid &&
+        existing().status == 'pending' &&
+        incoming().status == 'accepted' &&
+        incoming().requesterId == existing().requesterId &&
+        incoming().recipientId == existing().recipientId &&
+        incoming().users == existing().users &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']);
+      allow delete: if isSignedIn() && isValidId(friendshipId) && request.auth.uid in existing().users;
     }
 
     // Follows & Follow Requests
     match /follows/{followId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn() && incoming().followerId == request.auth.uid;
-      allow update: if isSignedIn() && existing().targetId == request.auth.uid;
-      allow delete: if isSignedIn() && (existing().followerId == request.auth.uid || existing().targetId == request.auth.uid);
+      allow create: if isSignedIn() && isValidId(followId) && incoming().followerId == request.auth.uid;
+      allow update: if isSignedIn() &&
+        isValidId(followId) &&
+        existing().targetId == request.auth.uid &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']);
+      allow delete: if isSignedIn() &&
+        isValidId(followId) &&
+        (existing().followerId == request.auth.uid || existing().targetId == request.auth.uid);
+    }
+
+    // MyDay 24-Hour Stories
+    match /stories/{storyId} {
+      allow get: if isSignedIn() && isValidId(storyId) && (
+        isOwner(existing().userId) ||
+        existing().visibility == 'public' ||
+        (existing().visibility == 'friends' && isFriendOf(existing().userId)) ||
+        (existing().visibility == 'close_friends' && 'closeFriendIds' in existing() && existing().closeFriendIds is list && request.auth.uid in existing().closeFriendIds)
+      );
+      allow list: if isSignedIn() && (
+        existing().userId == request.auth.uid ||
+        existing().visibility == 'public' ||
+        (existing().visibility == 'friends' && isFriendOf(existing().userId)) ||
+        (existing().visibility == 'close_friends' && 'closeFriendIds' in existing() && existing().closeFriendIds is list && request.auth.uid in existing().closeFriendIds)
+      );
+      allow create: if isSignedIn() &&
+        isValidId(storyId) &&
+        incoming().id == storyId &&
+        incoming().userId == request.auth.uid &&
+        incoming().visibility in ['public', 'friends', 'close_friends'] &&
+        incoming().mediaUrl is string &&
+        incoming().mediaUrl.size() <= 200 &&
+        incoming().altText is string &&
+        incoming().altText.size() <= 240 &&
+        (!('caption' in incoming()) || incoming().caption == null || (incoming().caption is string && incoming().caption.size() <= 220)) &&
+        (!('closeFriendIds' in incoming()) || incoming().closeFriendIds == null || (incoming().closeFriendIds is list && incoming().closeFriendIds.size() <= 50));
+      allow update: if isSignedIn() &&
+        isValidId(storyId) &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['viewCount']);
+      allow delete: if isSignedIn() && isValidId(storyId) && existing().userId == request.auth.uid;
+    }
+
+    // MyDay Story Views
+    match /storyViews/{viewId} {
+      allow get: if isSignedIn() && isValidId(viewId) &&
+        (existing().viewerId == request.auth.uid || existing().storyOwnerId == request.auth.uid);
+      allow list: if isSignedIn() &&
+        (existing().viewerId == request.auth.uid || existing().storyOwnerId == request.auth.uid);
+      allow create: if isSignedIn() &&
+        isValidId(viewId) &&
+        incoming().id == viewId &&
+        incoming().viewerId == request.auth.uid &&
+        incoming().storyId is string &&
+        incoming().storyOwnerId is string;
+      allow delete: if isSignedIn() &&
+        isValidId(viewId) &&
+        (existing().viewerId == request.auth.uid || existing().storyOwnerId == request.auth.uid);
+    }
+
+    // Direct Messages & Group Conversations
+    match /conversations/{convId} {
+      allow get: if isSignedIn() && isValidId(convId) && request.auth.uid in existing().participantIds;
+      allow list: if isSignedIn() && request.auth.uid in existing().participantIds;
+      allow create: if isSignedIn() &&
+        isValidId(convId) &&
+        incoming().id == convId &&
+        incoming().createdBy == request.auth.uid &&
+        incoming().type in ['dm', 'group'] &&
+        incoming().participantIds is list &&
+        incoming().participantIds.size() >= 2 &&
+        incoming().participantIds.size() <= 30 &&
+        request.auth.uid in incoming().participantIds &&
+        (!('name' in incoming()) || incoming().name == null || (incoming().name is string && incoming().name.size() <= 80));
+      allow update: if isSignedIn() &&
+        isValidId(convId) &&
+        request.auth.uid in existing().participantIds &&
+        (
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'lastMessageText',
+            'lastMessageAt',
+            'lastSenderId',
+            'unreadBy',
+            'lastReadAt',
+            'typingBy',
+            'updatedAt'
+          ]) ||
+          (existing().type == 'group' &&
+            'adminIds' in existing() &&
+            request.auth.uid in existing().adminIds &&
+            incoming().participantIds is list &&
+            incoming().participantIds.size() <= 30 &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'name',
+              'photoUrl',
+              'mediaId',
+              'participantIds',
+              'participantProfiles',
+              'adminIds',
+              'updatedAt'
+            ])) ||
+          (existing().type == 'group' &&
+            !(request.auth.uid in incoming().participantIds) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'participantIds',
+              'adminIds',
+              'updatedAt'
+            ]))
+        );
+
+      match /messages/{messageId} {
+        allow read: if isSignedIn() && canAccessConversation(convId);
+        allow create: if isSignedIn() &&
+          isValidId(messageId) &&
+          canAccessConversation(convId) &&
+          incoming().id == messageId &&
+          incoming().conversationId == convId &&
+          incoming().senderId == request.auth.uid &&
+          incoming().text is string &&
+          incoming().text.size() <= 1000 &&
+          (!('imageUrl' in incoming()) || incoming().imageUrl == null || (incoming().imageUrl is string && incoming().imageUrl.size() <= 200)) &&
+          (!('thumbUrl' in incoming()) || incoming().thumbUrl == null || (incoming().thumbUrl is string && incoming().thumbUrl.size() <= 200)) &&
+          (!('mediaId' in incoming()) || incoming().mediaId == null || (incoming().mediaId is string && incoming().mediaId.size() <= 128)) &&
+          (!('altText' in incoming()) || incoming().altText == null || (incoming().altText is string && incoming().altText.size() <= 240));
+        allow delete: if isSignedIn() &&
+          isValidId(messageId) &&
+          canAccessConversation(convId) &&
+          existing().senderId == request.auth.uid;
+      }
     }
 
     // Notifications (recipient-only read/update; signed-in actor can create)
     match /notifications/{notifId} {
-      allow read: if isSignedIn() && existing().recipientId == request.auth.uid;
-      allow create: if isSignedIn() && incoming().actorId == request.auth.uid;
-      allow update: if isSignedIn() && existing().recipientId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['read']);
-      allow delete: if isSignedIn() && existing().recipientId == request.auth.uid;
+      allow get: if isSignedIn() && isValidId(notifId) && existing().recipientId == request.auth.uid;
+      allow list: if isSignedIn() && existing().recipientId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(notifId) && incoming().actorId == request.auth.uid;
+      allow update: if isSignedIn() &&
+        isValidId(notifId) &&
+        existing().recipientId == request.auth.uid &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['read']);
+      allow delete: if isSignedIn() && isValidId(notifId) && existing().recipientId == request.auth.uid;
     }
 
     // Safety: Blocks & Mutes (strictly owner-only)
     match /userBlocks/{blockId} {
-      allow read: if isSignedIn() && existing().userId == request.auth.uid;
-      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
-      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+      allow get: if isSignedIn() && isValidId(blockId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(blockId) && incoming().userId == request.auth.uid;
+      allow delete: if isSignedIn() && isValidId(blockId) && existing().userId == request.auth.uid;
     }
 
     match /userMutes/{muteId} {
-      allow read: if isSignedIn() && existing().userId == request.auth.uid;
-      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
-      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+      allow get: if isSignedIn() && isValidId(muteId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(muteId) && incoming().userId == request.auth.uid;
+      allow delete: if isSignedIn() && isValidId(muteId) && existing().userId == request.auth.uid;
     }
 
     // Safety Reports
     match /reports/{reportId} {
-      allow create: if isSignedIn() && incoming().reporterId == request.auth.uid;
-      allow read: if isSignedIn() && existing().reporterId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(reportId) && incoming().reporterId == request.auth.uid;
+      allow get: if isSignedIn() && isValidId(reportId) && existing().reporterId == request.auth.uid;
+      allow list: if isSignedIn() && existing().reporterId == request.auth.uid;
     }
 
     // Wishlist (private by default, toggleable)
     match /wishlist/{wishId} {
-      allow read: if canViewVisibility(existing().userId, existing().visibility);
-      allow create: if isSignedIn() && incoming().userId == request.auth.uid && incoming().name is string && incoming().name.size() <= 140;
-      allow update: if isSignedIn() && existing().userId == request.auth.uid && incoming().userId == existing().userId;
-      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+      allow get: if isValidId(wishId) && canViewVisibility(existing().userId, existing().visibility);
+      allow list: if canViewVisibility(existing().userId, existing().visibility);
+      allow create: if isSignedIn() &&
+        isValidId(wishId) &&
+        incoming().userId == request.auth.uid &&
+        incoming().name is string &&
+        incoming().name.size() <= 140 &&
+        incoming().visibility in ['public', 'friends', 'followers', 'private'];
+      allow update: if isSignedIn() &&
+        isValidId(wishId) &&
+        existing().userId == request.auth.uid &&
+        incoming().userId == existing().userId &&
+        incoming().visibility in ['public', 'friends', 'followers', 'private'];
+      allow delete: if isSignedIn() && isValidId(wishId) && existing().userId == request.auth.uid;
     }
 
     // Private Schedules & Wear Logs (Strictly Owner-Only)
     match /schedules/{scheduleId} {
-      allow read: if isSignedIn() && existing().userId == request.auth.uid;
-      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
-      allow update: if isSignedIn() && existing().userId == request.auth.uid && incoming().userId == existing().userId;
-      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+      allow get: if isSignedIn() && isValidId(scheduleId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(scheduleId) && incoming().userId == request.auth.uid;
+      allow update: if isSignedIn() &&
+        isValidId(scheduleId) &&
+        existing().userId == request.auth.uid &&
+        incoming().userId == existing().userId;
+      allow delete: if isSignedIn() && isValidId(scheduleId) && existing().userId == request.auth.uid;
     }
 
     match /wearLogs/{logId} {
-      allow read: if isSignedIn() && existing().userId == request.auth.uid;
-      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
-      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+      allow get: if isSignedIn() && isValidId(logId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(logId) && incoming().userId == request.auth.uid;
+      allow delete: if isSignedIn() && isValidId(logId) && existing().userId == request.auth.uid;
     }
 
     // Shareable Lookbook / Outfit Links
     match /shareLinks/{token} {
-      allow get: if existing().visibility != 'revoked' || isOwner(existing().userId);
+      allow get: if isValidId(token) && (existing().visibility != 'revoked' || isOwner(existing().userId));
       allow list: if isSignedIn() && existing().userId == request.auth.uid;
-      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
-      allow update: if isSignedIn() && existing().userId == request.auth.uid;
-      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
-    }
-
-    // Daily AI Quotas (Owner-readable & server-mirrored)
-    match /aiQuotas/{quotaId} {
-      allow read: if isSignedIn() && existing().userId == request.auth.uid;
-      allow create, update: if isSignedIn() && incoming().userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(token) && incoming().userId == request.auth.uid;
+      allow update: if isSignedIn() && isValidId(token) && existing().userId == request.auth.uid;
+      allow delete: if isSignedIn() && isValidId(token) && existing().userId == request.auth.uid;
     }
   }
 }

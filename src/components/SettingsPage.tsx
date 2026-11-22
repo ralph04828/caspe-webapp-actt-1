@@ -1,13 +1,15 @@
 import React, { useState } from 'react';
-import { STYLE_CATEGORIES, Visibility } from '../types';
+import { FIT_VIBE_TAGS, Visibility } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useWardrobe } from '../context/WardrobeContext';
 import { useSocial } from '../context/SocialContext';
-import { uploadImageAsset } from '../services/storageService';
+import { preparePreviewDataUrl, uploadImageAsset } from '../services/storageService';
 import { normalizeUsername } from '../utils/formatters';
 import { AvatarImage } from './AvatarImage';
-import { Download, Loader2, Lock, Save, Shield, Trash2, Upload } from 'lucide-react';
+import { PhotoEditorModal, createDefaultCropState } from './PhotoEditorModal';
+import { ErrorBoundary } from './ErrorBoundary';
+import { AlertCircle, Copy, Download, Loader2, Lock, Save, Shield, Trash2, Upload } from 'lucide-react';
 
 interface SettingsPageProps {
   onToast: (msg: string, type?: 'success' | 'error') => void;
@@ -22,6 +24,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onToast }) => {
   const [displayName, setDisplayName] = useState(userProfile?.displayName || '');
   const [username, setUsername] = useState(userProfile?.username || '');
   const [bio, setBio] = useState(userProfile?.bio || '');
+  const [pronouns, setPronouns] = useState(userProfile?.pronouns || '');
+  const [location, setLocation] = useState(userProfile?.location || '');
   const [styleTags, setStyleTags] = useState<string[]>(userProfile?.styleTags || ['Streetwear']);
   const [isPublic, setIsPublic] = useState(userProfile?.isPublic !== false);
   const [defaultItemVis, setDefaultItemVis] = useState<Visibility>(
@@ -31,8 +35,11 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onToast }) => {
     userProfile?.defaultOutfitVisibility || 'public'
   );
   const [autoDirtyOnWear, setAutoDirtyOnWear] = useState(Boolean(userProfile?.autoDirtyOnWear));
+  const [showOnlineStatus, setShowOnlineStatus] = useState(userProfile?.showOnlineStatus !== false);
   const [saving, setSaving] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [avatarCropSource, setAvatarCropSource] = useState<string | null>(null);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
 
   const [currentPwd, setCurrentPwd] = useState('');
   const [newPwd, setNewPwd] = useState('');
@@ -40,14 +47,34 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onToast }) => {
 
   const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file || !userProfile) return;
-    setUploadingAvatar(true);
+    setAvatarError(null);
     try {
-      const uploaded = await uploadImageAsset(file, userProfile.uid, 'public', isDemoMode);
+      const preview = await preparePreviewDataUrl(file);
+      setAvatarCropSource(preview);
+    } catch (err: any) {
+      const msg = err?.message || 'Could not load selected photo.';
+      console.error('Avatar preview load failed:', err);
+      setAvatarError(msg);
+      onToast(msg, 'error');
+    }
+  };
+
+  const handleSaveCroppedAvatar = async (croppedDataUrl: string) => {
+    if (!userProfile) return;
+    setUploadingAvatar(true);
+    setAvatarError(null);
+    try {
+      const uploaded = await uploadImageAsset(croppedDataUrl, userProfile.uid, 'public', isDemoMode);
       await updateAccountProfile({ photoURL: uploaded.thumbUrl, mediaId: uploaded.mediaId });
+      setAvatarCropSource(null);
       onToast('Profile photo updated.');
     } catch (err: any) {
-      onToast(err?.message || 'Could not update photo.', 'error');
+      const msg = err?.message || 'Could not update photo.';
+      console.error('Profile photo upload failed:', err);
+      setAvatarError(msg);
+      onToast(msg, 'error');
     } finally {
       setUploadingAvatar(false);
     }
@@ -61,15 +88,20 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onToast }) => {
         displayName: displayName.trim(),
         username: normalizeUsername(username),
         bio: bio.trim(),
+        pronouns: pronouns.trim(),
+        location: location.trim(),
         styleTags,
         isPublic,
         defaultItemVisibility: defaultItemVis,
         defaultOutfitVisibility: defaultOutfitVis,
         autoDirtyOnWear,
+        showOnlineStatus,
       });
       onToast('Profile and privacy settings saved.');
     } catch (err: any) {
-      onToast(err?.message || 'Failed to update settings.', 'error');
+      const msg = err?.message || 'Failed to update settings.';
+      console.error('Profile settings save failed:', err);
+      onToast(msg, 'error');
     } finally {
       setSaving(false);
     }
@@ -108,24 +140,58 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onToast }) => {
       setNewPwd('');
       onToast('Password updated.');
     } catch (err: any) {
-      onToast(err?.message || 'Password update failed.', 'error');
+      const msg = err?.message || 'Password update failed.';
+      console.error('Password update failed:', err);
+      onToast(msg, 'error');
     }
   };
 
   return (
+    <ErrorBoundary title="Settings ran into an issue">
     <div className="max-w-3xl mx-auto space-y-6">
       <div>
         <h1 className="font-display text-2xl font-bold tracking-tight">Settings & Privacy</h1>
         <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8]">
-          Manage your profile, visibility defaults, blocked/muted users, data export, and account.
+          Manage your profile, invite link, online presence, visibility defaults, blocked/muted users, and data.
         </p>
       </div>
+
+      {/* Invite Link Card */}
+      <section className="p-5 rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="font-display font-bold text-sm">Invite Friends to SWOOOSH</h2>
+          <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8] truncate">
+            {`${window.location.origin}/?u=${userProfile?.username || 'member'}`}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            navigator.clipboard?.writeText(`${window.location.origin}/?u=${userProfile?.username || 'member'}`);
+            onToast('Invite link copied!');
+          }}
+          className="px-4 py-2 min-h-[42px] rounded-control bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-bold flex items-center gap-1.5 shrink-0 cursor-pointer"
+        >
+          <Copy className="w-3.5 h-3.5" />
+          <span>Copy invite link</span>
+        </button>
+      </section>
 
       {/* Profile & Privacy Form */}
       <form
         onSubmit={handleSaveProfile}
         className="p-6 rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] space-y-4"
       >
+        {avatarError && (
+          <div
+            role="alert"
+            className="p-3 rounded-control border border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300 text-xs flex items-start gap-2"
+          >
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>{avatarError}</span>
+          </div>
+        )}
+
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <AvatarImage
@@ -138,18 +204,18 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onToast }) => {
             <div>
               <h2 className="font-display font-bold text-base">Profile & Visibility</h2>
               <p className="text-[11px] text-[#4e4c46] dark:text-[#c2bfb8]">
-                Avatar is compressed to WebP &amp; synced across devices.
+                Avatar is cropped, compressed to WebP &amp; synced across devices.
               </p>
             </div>
           </div>
-          <label className="px-3 py-1.5 rounded-control border border-[#d4cfc5] dark:border-[#404040] text-xs font-semibold flex items-center gap-1.5 cursor-pointer">
+          <label className="px-3 py-1.5 min-h-[40px] rounded-control border border-[#d4cfc5] dark:border-[#404040] text-xs font-semibold flex items-center gap-1.5 cursor-pointer hover:bg-[#eae7e0] dark:hover:bg-[#303030]">
             {uploadingAvatar ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
             ) : (
               <Upload className="w-3.5 h-3.5" />
             )}
             <span>{uploadingAvatar ? 'Uploading...' : 'Change Avatar'}</span>
-            <input type="file" accept="image/*" onChange={handleAvatarUpload} className="sr-only" />
+            <input type="file" accept="image/*" onChange={handleAvatarUpload} disabled={uploadingAvatar} className="sr-only" />
           </label>
         </div>
 
@@ -176,6 +242,32 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onToast }) => {
               className="w-full px-3 py-2 rounded-control text-sm bg-[#f5f4f0] dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
             />
           </div>
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1">
+              Pronouns (Optional)
+            </label>
+            <input
+              type="text"
+              maxLength={32}
+              value={pronouns}
+              onChange={(e) => setPronouns(e.target.value)}
+              placeholder="they/them"
+              className="w-full px-3 py-2 rounded-control text-sm bg-[#f5f4f0] dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1">
+              City or Country (Optional)
+            </label>
+            <input
+              type="text"
+              maxLength={60}
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+              placeholder="Manila, PH"
+              className="w-full px-3 py-2 rounded-control text-sm bg-[#f5f4f0] dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+            />
+          </div>
         </div>
 
         <div>
@@ -195,7 +287,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onToast }) => {
             Style Tags
           </label>
           <div className="flex flex-wrap gap-1.5">
-            {STYLE_CATEGORIES.map((tag) => {
+            {FIT_VIBE_TAGS.map((tag) => {
               const active = styleTags.includes(tag);
               return (
                 <button
@@ -230,6 +322,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onToast }) => {
               className="w-full px-3 py-2 rounded-control text-xs bg-[#f5f4f0] dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
             >
               <option value="public">Public</option>
+              <option value="friends">Friends only</option>
               <option value="followers">Followers only</option>
               <option value="private">Private</option>
             </select>
@@ -245,6 +338,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onToast }) => {
               className="w-full px-3 py-2 rounded-control text-xs bg-[#f5f4f0] dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
             >
               <option value="public">Public</option>
+              <option value="friends">Friends only</option>
               <option value="followers">Followers only</option>
               <option value="private">Private</option>
             </select>
@@ -261,6 +355,16 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onToast }) => {
             />
             <Lock className="w-3.5 h-3.5" />
             <span>Private account (require follow approval)</span>
+          </label>
+
+          <label className="flex items-center gap-2.5 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showOnlineStatus}
+              onChange={(e) => setShowOnlineStatus(e.target.checked)}
+              className="accent-[#171717] dark:accent-[#e5e1da]"
+            />
+            <span>Show green online dot &amp; last seen status to friends</span>
           </label>
 
           <label className="flex items-center gap-2.5 cursor-pointer">
@@ -435,6 +539,27 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onToast }) => {
           </div>
         )}
       </section>
+
+      <PhotoEditorModal
+        open={Boolean(avatarCropSource)}
+        sourceUrl={avatarCropSource || ''}
+        initialCrop={createDefaultCropState('1:1')}
+        defaultAspect="1:1"
+        circleMask={true}
+        outputMaxDim={512}
+        title="Crop Profile Photo"
+        subtitle="Drag and zoom to frame your SWOOOSH profile picture."
+        doneLabel={uploadingAvatar ? 'Saving...' : 'Done'}
+        onCancel={() => {
+          if (!uploadingAvatar) setAvatarCropSource(null);
+        }}
+        onChangePhotoFile={async (file) => {
+          const preview = await preparePreviewDataUrl(file);
+          setAvatarCropSource(preview);
+        }}
+        onDone={({ croppedDataUrl }) => handleSaveCroppedAvatar(croppedDataUrl)}
+      />
     </div>
+    </ErrorBoundary>
   );
 };
