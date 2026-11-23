@@ -232,10 +232,9 @@ export async function readFileAsDataUrl(file: File): Promise<string> {
 }
 
 /**
- * Compresses a File or Data URL into an immediately usable WebP Data URL (max 1000px @ 0.8)
- * for previewing / background removal without holding raw multi-MB files or blob URLs.
+ * Compresses a File into a preview WebP variant (max 1000px @ 0.8) with exact dimensions.
  */
-export async function preparePreviewDataUrl(file: File): Promise<string> {
+export async function preparePreviewAsset(file: File): Promise<CompressedVariant> {
   const err = validateImageFile(file);
   if (err) throw new Error(err);
 
@@ -246,11 +245,19 @@ export async function preparePreviewDataUrl(file: File): Promise<string> {
 
   try {
     const src = objectUrl || (await readFileAsDataUrl(file));
-    const compressed = await compressSourceToWebp(src, MAX_FULL_DIMENSION, WEBP_QUALITY);
-    return compressed.dataUrl;
+    return await compressSourceToWebp(src, MAX_FULL_DIMENSION, WEBP_QUALITY);
   } finally {
     if (objectUrl) revokeTempUrl(objectUrl);
   }
+}
+
+/**
+ * Compresses a File or Data URL into an immediately usable WebP Data URL (max 1000px @ 0.8)
+ * for previewing / background removal without holding raw multi-MB files or blob URLs.
+ */
+export async function preparePreviewDataUrl(file: File): Promise<string> {
+  const compressed = await preparePreviewAsset(file);
+  return compressed.dataUrl;
 }
 
 function estimateFirestoreMediaDocBytes(

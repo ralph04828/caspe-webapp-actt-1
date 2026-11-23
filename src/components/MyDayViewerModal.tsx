@@ -15,6 +15,7 @@ import { useAuth } from '../context/AuthContext';
 import { useSocial } from '../context/SocialContext';
 import { StoryView } from '../types';
 import { formatRelativeTime } from '../utils/formatters';
+import { resolveDisplayAspectRatio } from '../utils/aspectRatio';
 import { AvatarImage } from './AvatarImage';
 import { GarmentImage } from './GarmentImage';
 import { MyDayUserGroup } from './MyDayBar';
@@ -62,6 +63,7 @@ export const MyDayViewerModal: React.FC<MyDayViewerModalProps> = ({
   const [replySending, setReplySending] = useState(false);
   const [statusNote, setStatusNote] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [storyDims, setStoryDims] = useState<{ width: number; height: number } | null>(null);
 
   const currentGroup = groups[groupIdx];
   const currentStory = currentGroup?.stories[storyIdx];
@@ -104,8 +106,9 @@ export const MyDayViewerModal: React.FC<MyDayViewerModalProps> = ({
     }
   };
 
-  // Mark story viewed when it becomes active
+  // Mark story viewed & reset natural fallback dims when switching story
   useEffect(() => {
+    setStoryDims(null);
     if (currentStory) {
       markStoryViewed(currentStory);
     }
@@ -141,6 +144,16 @@ export const MyDayViewerModal: React.FC<MyDayViewerModalProps> = ({
   }, [groupIdx, storyIdx, groups.length]);
 
   if (!currentGroup || !currentStory) return null;
+
+  const storyAspect = resolveDisplayAspectRatio({
+    aspectRatio: currentStory.aspectRatio,
+    width: currentStory.width,
+    height: currentStory.height,
+    naturalWidth: storyDims?.width,
+    naturalHeight: storyDims?.height,
+    fallbackRatio: 4 / 5,
+    maxHeightCss: '80vh',
+  });
 
   const handleOpenViewers = async () => {
     if (!isOwner) return;
@@ -334,12 +347,17 @@ export const MyDayViewerModal: React.FC<MyDayViewerModalProps> = ({
 
         {/* Media + Tap Navigation Overlay */}
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#171717]">
-          <GarmentImage
-            src={currentStory.mediaUrl}
-            mediaId={currentStory.mediaId}
-            alt={currentStory.altText}
-            className="w-full h-full object-contain sm:object-cover"
-          />
+          <div className="w-full mx-auto overflow-hidden" style={storyAspect.frameStyle}>
+            <GarmentImage
+              src={currentStory.mediaUrl}
+              mediaId={currentStory.mediaId}
+              alt={currentStory.altText}
+              className="w-full h-full object-cover"
+              onImageLoad={(dims) => {
+                setStoryDims({ width: dims.naturalWidth, height: dims.naturalHeight });
+              }}
+            />
+          </div>
 
           {/* Tap Left / Right Zones */}
           <button

@@ -241,6 +241,13 @@ service cloud.firestore {
       allow delete: if isSignedIn() && isValidId(outfitId) && existing().userId == request.auth.uid;
     }
 
+    function isValidAspectFields(data) {
+      return (!('aspectRatio' in data) || data.aspectRatio == null || (data.aspectRatio is string && data.aspectRatio.size() <= 16)) &&
+        (!('width' in data) || data.width == null || (data.width is number && data.width > 0 && data.width <= 4096)) &&
+        (!('height' in data) || data.height == null || (data.height is number && data.height > 0 && data.height <= 4096)) &&
+        (!('mediaDimensions' in data) || data.mediaDimensions == null || (data.mediaDimensions is list && data.mediaDimensions.size() <= 4));
+    }
+
     // Social Feed Posts
     match /posts/{postId} {
       allow get: if isValidId(postId) && canViewVisibility(existing().userId, existing().visibility);
@@ -254,6 +261,7 @@ service cloud.firestore {
         (!('itemId' in incoming()) || incoming().itemId == null || incoming().itemId is string) &&
         (!('mediaUrl' in incoming()) || incoming().mediaUrl == null || incoming().mediaUrl is string) &&
         (!('occasion' in incoming()) || incoming().occasion == null || incoming().occasion is string) &&
+        isValidAspectFields(incoming()) &&
         incoming().visibility in ['public', 'friends', 'followers', 'private'];
       allow update: if isSignedIn() && isValidId(postId) && (
         (existing().userId == request.auth.uid &&
@@ -263,6 +271,7 @@ service cloud.firestore {
           (!('itemId' in incoming()) || incoming().itemId == null || incoming().itemId is string) &&
           (!('mediaUrl' in incoming()) || incoming().mediaUrl == null || incoming().mediaUrl is string) &&
           (!('occasion' in incoming()) || incoming().occasion == null || incoming().occasion is string) &&
+          isValidAspectFields(incoming()) &&
           incoming().visibility in ['public', 'friends', 'followers', 'private']) ||
         incoming().diff(existing()).affectedKeys().hasOnly(['likesCount', 'commentsCount', 'savesCount', 'remixesCount'])
       );
@@ -368,7 +377,8 @@ service cloud.firestore {
         incoming().altText is string &&
         incoming().altText.size() <= 240 &&
         (!('caption' in incoming()) || incoming().caption == null || (incoming().caption is string && incoming().caption.size() <= 220)) &&
-        (!('closeFriendIds' in incoming()) || incoming().closeFriendIds == null || (incoming().closeFriendIds is list && incoming().closeFriendIds.size() <= 50));
+        (!('closeFriendIds' in incoming()) || incoming().closeFriendIds == null || (incoming().closeFriendIds is list && incoming().closeFriendIds.size() <= 50)) &&
+        isValidAspectFields(incoming());
       allow update: if isSignedIn() &&
         isValidId(storyId) &&
         incoming().diff(existing()).affectedKeys().hasOnly(['viewCount']);

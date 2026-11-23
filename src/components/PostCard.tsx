@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { PostComment, SocialPost, Visibility } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useSocial } from '../context/SocialContext';
 import { preparePreviewDataUrl, uploadImageAsset } from '../services/storageService';
 import { formatRelativeTime } from '../utils/formatters';
+import { resolveDisplayAspectRatio } from '../utils/aspectRatio';
 import { AvatarImage } from './AvatarImage';
 import { GarmentImage } from './GarmentImage';
 import { VisibilityBadge } from './VisibilityBadge';
@@ -71,6 +72,13 @@ export const PostCard: React.FC<PostCardProps> = ({
   const [savingEdit, setSavingEdit] = useState(false);
 
   const [mediaIdx, setMediaIdx] = useState(0);
+  const [naturalDims, setNaturalDims] = useState<{ width: number; height: number } | null>(null);
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    setMediaIdx(0);
+    setNaturalDims(null);
+  }, [post.id]);
 
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [comments, setComments] = useState<PostComment[]>([]);
@@ -100,6 +108,17 @@ export const PostCard: React.FC<PostCardProps> = ({
     post.altTexts && post.altTexts.length > 0
       ? post.altTexts
       : [post.altText || post.caption || 'Fashion fit post'];
+
+  const displayAspect = resolveDisplayAspectRatio({
+    aspectRatio: post.aspectRatio,
+    width: post.width,
+    height: post.height,
+    mediaDimensions: post.mediaDimensions,
+    naturalWidth: naturalDims?.width,
+    naturalHeight: naturalDims?.height,
+    fallbackRatio: 1,
+    maxHeightCss: '80vh',
+  });
 
   const handleToggleComments = async () => {
     const next = !commentsOpen;
@@ -373,46 +392,75 @@ export const PostCard: React.FC<PostCardProps> = ({
 
       {/* Main Photo Carousel (1–4 images) */}
       {(mediaUrls.length > 0 || mediaIds.length > 0) && (
-        <div className="relative aspect-[4/3] sm:aspect-[16/11] bg-[#eae7e0] dark:bg-[#171717] overflow-hidden border-y border-[#d4cfc5]/60 dark:border-[#404040]/60">
-          <GarmentImage
-            src={mediaUrls[mediaIdx]}
-            mediaId={mediaIds[mediaIdx]}
-            alt={altTexts[mediaIdx] || post.altText || post.caption || 'Fashion fit post'}
-            className="w-full h-full object-cover"
-          />
-          {mediaUrls.length > 1 && (
-            <>
-              <button
-                type="button"
-                onClick={() => setMediaIdx((i) => (i - 1 + mediaUrls.length) % mediaUrls.length)}
-                aria-label="Previous photo"
-                className="absolute left-2.5 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/65 text-white flex items-center justify-center cursor-pointer"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setMediaIdx((i) => (i + 1) % mediaUrls.length)}
-                aria-label="Next photo"
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/65 text-white flex items-center justify-center cursor-pointer"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
-              <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/60">
-                {mediaUrls.map((_, i) => (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() => setMediaIdx(i)}
-                    aria-label={`Photo ${i + 1}`}
-                    className={`w-2 h-2 rounded-full cursor-pointer ${
-                      i === mediaIdx ? 'bg-white' : 'bg-white/45'
-                    }`}
-                  />
-                ))}
-              </div>
-            </>
-          )}
+        <div className="bg-[#eae7e0] dark:bg-[#171717] border-y border-[#d4cfc5]/60 dark:border-[#404040]/60">
+          <div
+            className="relative w-full mx-auto overflow-hidden touch-pan-y"
+            style={displayAspect.frameStyle}
+            onTouchStart={(e) => {
+              const t = e.touches[0];
+              if (t && mediaUrls.length > 1) {
+                touchStartRef.current = { x: t.clientX, y: t.clientY };
+              }
+            }}
+            onTouchEnd={(e) => {
+              const start = touchStartRef.current;
+              touchStartRef.current = null;
+              const t = e.changedTouches[0];
+              if (!start || !t || mediaUrls.length <= 1) return;
+              const dx = t.clientX - start.x;
+              const dy = t.clientY - start.y;
+              if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)) {
+                setMediaIdx((i) =>
+                  dx < 0 ? (i + 1) % mediaUrls.length : (i - 1 + mediaUrls.length) % mediaUrls.length
+                );
+              }
+            }}
+          >
+            <GarmentImage
+              src={mediaUrls[mediaIdx]}
+              mediaId={mediaIds[mediaIdx]}
+              alt={altTexts[mediaIdx] || post.altText || post.caption || 'Fashion fit post'}
+              className="w-full h-full object-cover"
+              onImageLoad={(dims) => {
+                if (mediaIdx === 0 && !naturalDims) {
+                  setNaturalDims({ width: dims.naturalWidth, height: dims.naturalHeight });
+                }
+              }}
+            />
+            {mediaUrls.length > 1 && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setMediaIdx((i) => (i - 1 + mediaUrls.length) % mediaUrls.length)}
+                  aria-label="Previous photo"
+                  className="absolute left-2.5 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/65 text-white flex items-center justify-center cursor-pointer"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMediaIdx((i) => (i + 1) % mediaUrls.length)}
+                  aria-label="Next photo"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/65 text-white flex items-center justify-center cursor-pointer"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+                <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/60">
+                  {mediaUrls.map((_, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => setMediaIdx(i)}
+                      aria-label={`Photo ${i + 1}`}
+                      className={`w-2 h-2 rounded-full cursor-pointer ${
+                        i === mediaIdx ? 'bg-white' : 'bg-white/45'
+                      }`}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
         </div>
       )}
 

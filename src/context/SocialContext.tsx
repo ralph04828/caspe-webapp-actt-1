@@ -103,6 +103,7 @@ import {
 } from '../utils/formatters';
 import { deleteImageAsset } from '../services/storageService';
 import { cleanData } from '../utils/cleanData';
+import { formatAspectRatioFromDimensions } from '../utils/aspectRatio';
 
 const DEMO_SOCIAL_KEY = 'swooosh_demo_social_v3';
 
@@ -185,6 +186,10 @@ interface SocialContextType {
     mediaIds?: string[];
     altText?: string;
     altTexts?: string[];
+    aspectRatio?: string;
+    width?: number;
+    height?: number;
+    mediaDimensions?: { width: number; height: number }[];
     seasons?: SeasonTag[];
     styleTags?: string[];
     occasion?: string;
@@ -224,6 +229,9 @@ interface SocialContextType {
     mediaUrl: string;
     thumbUrl: string;
     mediaId?: string;
+    aspectRatio?: string;
+    width?: number;
+    height?: number;
     altText: string;
     caption?: string;
     styleTag?: string;
@@ -719,6 +727,18 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
     const mediaUrls = params.mediaUrls?.length ? params.mediaUrls.slice(0, 4) : mediaUrl ? [mediaUrl] : undefined;
     const thumbUrls = params.thumbUrls?.length ? params.thumbUrls.slice(0, 4) : thumbUrl ? [thumbUrl] : undefined;
     const mediaIds = params.mediaIds?.length ? params.mediaIds.slice(0, 4) : mediaId ? [mediaId] : undefined;
+    const mediaDimensions = params.mediaDimensions?.length
+      ? params.mediaDimensions.slice(0, 4)
+      : params.width && params.height
+      ? [{ width: params.width, height: params.height }]
+      : undefined;
+    const resolvedWidth = params.width ?? mediaDimensions?.[0]?.width;
+    const resolvedHeight = params.height ?? mediaDimensions?.[0]?.height;
+    const resolvedAspectRatio =
+      params.aspectRatio ||
+      (resolvedWidth && resolvedHeight
+        ? formatAspectRatioFromDimensions(resolvedWidth, resolvedHeight)
+        : undefined);
     const mentions = extractMentions(params.caption);
 
     const post: SocialPost = cleanData({
@@ -741,6 +761,10 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
       mediaIds,
       altText: altText || 'Fashion fit post',
       altTexts: params.altTexts,
+      aspectRatio: resolvedAspectRatio,
+      width: resolvedWidth,
+      height: resolvedHeight,
+      mediaDimensions,
       seasons: params.seasons || params.outfit?.seasons,
       piecesPreview,
       styleTags: params.styleTags || (params.outfit ? [params.outfit.styleCategory] : ['Streetwear']),
@@ -754,6 +778,14 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
       savesCount: 0,
       remixesCount: 0,
       createdAt: new Date().toISOString(),
+    });
+
+    console.log('[SWOOOSH] Saving post dimensions:', {
+      postId: post.id,
+      aspectRatio: post.aspectRatio ?? null,
+      width: post.width ?? null,
+      height: post.height ?? null,
+      mediaDimensions: post.mediaDimensions ?? null,
     });
 
     if (isDemoMode) {
@@ -1200,6 +1232,11 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
       if (!safety.ok) throw new Error(safety.reason || 'Caption failed safety check.');
     }
     const now = Date.now();
+    const storyAspect =
+      params.aspectRatio ||
+      (params.width && params.height
+        ? formatAspectRatioFromDimensions(params.width, params.height)
+        : '3:4');
     const story: MyDayStory = cleanData({
       id: `story_${now}_${Math.random().toString(36).slice(2, 7)}`,
       userId: userProfile.uid,
@@ -1209,6 +1246,9 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
       mediaUrl: params.mediaUrl,
       thumbUrl: params.thumbUrl,
       mediaId: params.mediaId,
+      aspectRatio: storyAspect,
+      width: params.width,
+      height: params.height,
       altText: params.altText.trim() || `${userProfile.displayName}'s MyDay fit`,
       caption: params.caption?.trim() || undefined,
       styleTag: params.styleTag,
@@ -1218,6 +1258,13 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
       viewCount: 0,
       createdAt: new Date(now).toISOString(),
       expiresAt: new Date(now + 24 * 60 * 60 * 1000).toISOString(),
+    });
+
+    console.log('[SWOOOSH] Saving MyDay dimensions:', {
+      storyId: story.id,
+      aspectRatio: story.aspectRatio ?? null,
+      width: story.width ?? null,
+      height: story.height ?? null,
     });
 
     if (isDemoMode) {

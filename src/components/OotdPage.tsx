@@ -11,7 +11,11 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useWardrobe } from '../context/WardrobeContext';
 import { useSocial } from '../context/SocialContext';
-import { preparePreviewDataUrl, uploadImageAsset } from '../services/storageService';
+import { preparePreviewAsset, preparePreviewDataUrl, uploadImageAsset } from '../services/storageService';
+import {
+  formatAspectRatioFromDimensions,
+  resolveDisplayAspectRatio,
+} from '../utils/aspectRatio';
 import {
   getDraftSessionKey,
   loadSessionJson,
@@ -39,6 +43,9 @@ interface OotdStagedPhoto {
   rawDataUrl: string;
   croppedDataUrl?: string;
   cropState?: PhotoCropState | null;
+  aspectRatio?: string;
+  width?: number;
+  height?: number;
   alt: string;
 }
 
@@ -128,23 +135,29 @@ export const OotdPage: React.FC<OotdPageProps> = ({
     setFormError(null);
 
     try {
+      const defaultSharedAspect = photos[0]?.cropState?.aspectKey || '4:5';
       if (files.length === 1) {
-        const compressed = await preparePreviewDataUrl(files[0]);
+        const compressed = await preparePreviewAsset(files[0]);
         setEditorState({
           mode: 'new',
-          sourceUrl: compressed,
-          initialCrop: createDefaultCropState('3:4'),
+          sourceUrl: compressed.dataUrl,
+          initialCrop: createDefaultCropState(defaultSharedAspect),
         });
         return;
       }
 
       const added: OotdStagedPhoto[] = [];
       for (const file of files) {
-        const compressed = await preparePreviewDataUrl(file);
+        const compressed = await preparePreviewAsset(file);
         added.push({
-          rawDataUrl: compressed,
-          croppedDataUrl: compressed,
+          rawDataUrl: compressed.dataUrl,
+          croppedDataUrl: compressed.dataUrl,
           cropState: null,
+          aspectRatio: formatAspectRatioFromDimensions(compressed.width, compressed.height, {
+            clampToFeed: true,
+          }),
+          width: compressed.width,
+          height: compressed.height,
           alt: '',
         });
       }
@@ -181,6 +194,8 @@ export const OotdPage: React.FC<OotdPageProps> = ({
       const thumbUrls: string[] = [];
       const mediaIds: string[] = [];
       const altTexts: string[] = [];
+      const mediaDimensions: { width: number; height: number }[] = [];
+      let primaryAspectRatio: string | undefined;
 
       for (const p of photos) {
         const sourceToUpload = p.croppedDataUrl || p.rawDataUrl;
@@ -189,6 +204,15 @@ export const OotdPage: React.FC<OotdPageProps> = ({
         thumbUrls.push(uploaded.thumbUrl);
         mediaIds.push(uploaded.mediaId);
         altTexts.push(p.alt.trim() || caption.trim().slice(0, 100));
+        mediaDimensions.push({ width: uploaded.width, height: uploaded.height });
+        if (!primaryAspectRatio) {
+          primaryAspectRatio =
+            p.aspectRatio ||
+            p.cropState?.aspectKey ||
+            formatAspectRatioFromDimensions(uploaded.width, uploaded.height, {
+              clampToFeed: true,
+            });
+        }
       }
 
       const linkedOutfit = outfits.find((o) => o.id === selectedOutfitId);
@@ -209,6 +233,10 @@ export const OotdPage: React.FC<OotdPageProps> = ({
         mediaIds,
         altText: altTexts[0],
         altTexts,
+        aspectRatio: primaryAspectRatio,
+        width: mediaDimensions[0]?.width,
+        height: mediaDimensions[0]?.height,
+        mediaDimensions,
         seasons,
         styleTags: styleTags.length ? styleTags : ['Streetwear'],
       });
@@ -265,12 +293,21 @@ export const OotdPage: React.FC<OotdPageProps> = ({
 
               {photos.length > 0 && (
                 <div className="grid grid-cols-2 gap-2.5">
-                  {photos.map((p, idx) => (
+                  {photos.map((p, idx) => {
+                    const previewAspect = resolveDisplayAspectRatio({
+                      aspectRatio: p.aspectRatio || p.cropState?.aspectKey,
+                      width: p.width,
+                      height: p.height,
+                      fallbackRatio: 4 / 5,
+                      maxHeightCss: '15rem',
+                    });
+                    return (
                     <div
                       key={idx}
                       className="rounded-control border border-[#d4cfc5] dark:border-[#404040] bg-[#f5f4f0] dark:bg-[#171717] overflow-hidden"
                     >
-                      <div className="relative aspect-square">
+                      <div className="bg-[#eae7e0] dark:bg-[#242424] flex items-center justify-center">
+                        <div className="relative w-full mx-auto overflow-hidden" style={previewAspect.frameStyle}>
                         <GarmentImage
                           src={p.croppedDataUrl || p.rawDataUrl}
                           alt={p.alt || `OOTD photo ${idx + 1}`}
@@ -282,7 +319,7 @@ export const OotdPage: React.FC<OotdPageProps> = ({
                               mode: 'edit',
                               index: idx,
                               sourceUrl: p.rawDataUrl,
-                              initialCrop: p.cropState || createDefaultCropState('3:4'),
+                              initialCrop: p.cropState || createDefaultCropState('4:5'),
                             })
                           }
                           aria-label={`Edit crop for photo ${idx + 1}`}
@@ -299,6 +336,7 @@ export const OotdPage: React.FC<OotdPageProps> = ({
                         >
                           <X className="w-3.5 h-3.5" />
                         </button>
+                        </div>
                       </div>
                       <input
                         type="text"
@@ -312,7 +350,8 @@ export const OotdPage: React.FC<OotdPageProps> = ({
                         className="w-full px-2.5 py-1.5 text-[11px] bg-white dark:bg-[#242424] border-t border-[#d4cfc5] dark:border-[#404040]"
                       />
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
 
@@ -520,7 +559,7 @@ export const OotdPage: React.FC<OotdPageProps> = ({
         open={Boolean(editorState)}
         sourceUrl={editorState?.sourceUrl || ''}
         initialCrop={editorState?.initialCrop}
-        defaultAspect="3:4"
+        defaultAspect="4:5"
         allowAspectSwitch={true}
         title="Crop OOTD Photo"
         subtitle="Frame your Outfit of the Day, then tap Done to keep it in your post."
@@ -533,12 +572,12 @@ export const OotdPage: React.FC<OotdPageProps> = ({
               ? {
                   ...prev,
                   sourceUrl: compressed,
-                  initialCrop: createDefaultCropState(prev.initialCrop?.aspectKey || '3:4'),
+                  initialCrop: createDefaultCropState(prev.initialCrop?.aspectKey || '4:5'),
                 }
               : null
           );
         }}
-        onDone={({ croppedDataUrl, cropState }) => {
+        onDone={({ croppedDataUrl, cropState, aspectRatio, width, height }) => {
           if (!editorState) return;
           if (editorState.mode === 'new') {
             setPhotos((prev) =>
@@ -548,6 +587,9 @@ export const OotdPage: React.FC<OotdPageProps> = ({
                   rawDataUrl: editorState.sourceUrl,
                   croppedDataUrl,
                   cropState,
+                  aspectRatio,
+                  width,
+                  height,
                   alt: '',
                 },
               ].slice(0, 4)
@@ -562,6 +604,9 @@ export const OotdPage: React.FC<OotdPageProps> = ({
                       rawDataUrl: editorState.sourceUrl,
                       croppedDataUrl,
                       cropState,
+                      aspectRatio,
+                      width,
+                      height,
                     }
                   : p
               )

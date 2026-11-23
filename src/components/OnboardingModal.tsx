@@ -12,6 +12,7 @@ import {
 } from '../types';
 import { deleteImageAsset, preparePreviewDataUrl, revokeTempUrl, uploadImageAsset } from '../services/storageService';
 import { calculateAgeFromBirthday, normalizeUsername, validateUsername } from '../utils/formatters';
+import { formatAspectRatioFromDimensions, resolveDisplayAspectRatio } from '../utils/aspectRatio';
 import { pickFitReaction } from '../data/fitReactions';
 import { AvatarImage } from './AvatarImage';
 import { AvatarCropModal } from './AvatarCropModal';
@@ -61,6 +62,9 @@ interface FitDraft {
   imageUrl?: string;
   thumbUrl?: string;
   mediaId?: string;
+  aspectRatio?: string;
+  width?: number;
+  height?: number;
   vibes?: string[];
   notSure?: boolean;
   reactionLine?: string;
@@ -114,6 +118,9 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onNavigate, onTo
   const [fitImageUrl, setFitImageUrl] = useState<string | undefined>(undefined);
   const [fitThumbUrl, setFitThumbUrl] = useState<string | undefined>(undefined);
   const [fitMediaId, setFitMediaId] = useState<string | undefined>(undefined);
+  const [fitAspectRatio, setFitAspectRatio] = useState<string | undefined>(undefined);
+  const [fitWidth, setFitWidth] = useState<number | undefined>(undefined);
+  const [fitHeight, setFitHeight] = useState<number | undefined>(undefined);
   const [fitVibes, setFitVibes] = useState<string[]>([]);
   const [fitNotSure, setFitNotSure] = useState(false);
   const [uploadingFit, setUploadingFit] = useState(false);
@@ -163,6 +170,9 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onNavigate, onTo
         setFitImageUrl(parsedFit.imageUrl);
         setFitThumbUrl(parsedFit.thumbUrl);
         setFitMediaId(parsedFit.mediaId);
+        setFitAspectRatio(parsedFit.aspectRatio);
+        setFitWidth(parsedFit.width);
+        setFitHeight(parsedFit.height);
         setFitVibes(parsedFit.vibes || []);
         setFitNotSure(Boolean(parsedFit.notSure));
         setReactionLine(parsedFit.reactionLine || '');
@@ -216,6 +226,9 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onNavigate, onTo
         imageUrl: fitImageUrl,
         thumbUrl: fitThumbUrl,
         mediaId: fitMediaId,
+        aspectRatio: fitAspectRatio,
+        width: fitWidth,
+        height: fitHeight,
         vibes: fitVibes,
         notSure: fitNotSure,
         reactionLine,
@@ -230,6 +243,9 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onNavigate, onTo
     fitImageUrl,
     fitThumbUrl,
     fitMediaId,
+    fitAspectRatio,
+    fitWidth,
+    fitHeight,
     fitVibes,
     fitNotSure,
     reactionLine,
@@ -400,6 +416,11 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onNavigate, onTo
       setFitImageUrl(uploaded.imageUrl);
       setFitThumbUrl(uploaded.thumbUrl);
       setFitMediaId(uploaded.mediaId);
+      setFitWidth(uploaded.width);
+      setFitHeight(uploaded.height);
+      setFitAspectRatio(
+        formatAspectRatioFromDimensions(uploaded.width, uploaded.height, { clampToFeed: true })
+      );
     } catch (err: any) {
       setFitError(err?.message || 'Could not compress or upload fit photo.');
     } finally {
@@ -446,6 +467,9 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onNavigate, onTo
         mediaUrl: fitImageUrl,
         thumbUrl: fitThumbUrl,
         mediaId: fitMediaId,
+        aspectRatio: fitAspectRatio,
+        width: fitWidth,
+        height: fitHeight,
         altText: `${userProfile.displayName}'s first fit on SWOOOSH`,
         styleTags: tagsToUse,
       });
@@ -963,12 +987,32 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onNavigate, onTo
 
             {fitImageUrl ? (
               <div className="space-y-3">
-                <div className="relative aspect-[4/5] max-h-96 mx-auto rounded-card overflow-hidden border border-[#d4cfc5] dark:border-[#404040] bg-[#171717]">
+                <div
+                  className="relative w-full mx-auto rounded-card overflow-hidden border border-[#d4cfc5] dark:border-[#404040] bg-[#171717]"
+                  style={
+                    resolveDisplayAspectRatio({
+                      aspectRatio: fitAspectRatio,
+                      width: fitWidth,
+                      height: fitHeight,
+                      fallbackRatio: 4 / 5,
+                      maxHeightCss: '24rem',
+                    }).frameStyle
+                  }
+                >
                   <GarmentImage
                     src={fitImageUrl}
                     mediaId={fitMediaId}
                     alt="Uploaded fit preview"
                     className="w-full h-full object-cover"
+                    onImageLoad={(dims) => {
+                      if (!fitWidth || !fitHeight) {
+                        setFitWidth(dims.naturalWidth);
+                        setFitHeight(dims.naturalHeight);
+                        setFitAspectRatio(
+                          formatAspectRatioFromDimensions(dims.naturalWidth, dims.naturalHeight, { clampToFeed: true })
+                        );
+                      }
+                    }}
                   />
                 </div>
                 <div className="flex justify-center gap-2">
@@ -1104,7 +1148,18 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onNavigate, onTo
 
             <div className="relative z-20 max-w-xl w-full p-6 sm:p-8 rounded-modal border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] shadow-2xl space-y-5 animate-swooosh-pop">
               {fitImageUrl && (
-                <div className="aspect-[4/5] max-h-72 mx-auto rounded-card overflow-hidden border border-[#d4cfc5] dark:border-[#404040] bg-[#171717]">
+                <div
+                  className="w-full mx-auto rounded-card overflow-hidden border border-[#d4cfc5] dark:border-[#404040] bg-[#171717]"
+                  style={
+                    resolveDisplayAspectRatio({
+                      aspectRatio: fitAspectRatio,
+                      width: fitWidth,
+                      height: fitHeight,
+                      fallbackRatio: 4 / 5,
+                      maxHeightCss: '18rem',
+                    }).frameStyle
+                  }
+                >
                   <GarmentImage
                     src={fitImageUrl}
                     mediaId={fitMediaId}

@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { NavSection, STYLE_CATEGORIES, SocialPost } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useSocial } from '../context/SocialContext';
+import { resolveDisplayAspectRatio } from '../utils/aspectRatio';
 import { AvatarImage } from './AvatarImage';
 import { GarmentImage } from './GarmentImage';
 import { PostCard } from './PostCard';
@@ -33,6 +34,7 @@ export const ExplorePage: React.FC<ExplorePageProps> = ({
   const [queryText, setQueryText] = useState('');
   const [selectedStyle, setSelectedStyle] = useState<string>('All');
   const [focusedPost, setFocusedPost] = useState<SocialPost | null>(null);
+  const [dimsByPostId, setDimsByPostId] = useState<Record<string, { width: number; height: number }>>({});
 
   const matchingPeople = useMemo(() => {
     const q = queryText.trim().toLowerCase().replace(/^@/, '');
@@ -228,40 +230,61 @@ export const ExplorePage: React.FC<ExplorePageProps> = ({
             No public fits match this filter yet.
           </div>
         ) : (
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3.5">
-            {matchingPosts.map((post) => (
-              <button
-                key={post.id}
-                type="button"
-                onClick={() => setFocusedPost(post)}
-                className="group relative aspect-[3/4] rounded-card overflow-hidden border border-[#d4cfc5] dark:border-[#404040] bg-[#eae7e0] dark:bg-[#242424] text-left cursor-pointer"
-              >
-                <GarmentImage
-                  src={post.thumbUrl || post.mediaUrl}
-                  mediaId={post.mediaId}
-                  alt={post.altText || post.caption || 'Fashion fit post'}
-                  fallbackLabel={post.caption || 'Fit post'}
-                  className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/15 to-transparent flex flex-col justify-end p-3 text-[#f5f4f0]">
-                  <p className="text-xs font-semibold truncate">@{post.authorUsername || 'member'}</p>
-                  <p className="text-[11px] opacity-85 line-clamp-1">{post.caption || ''}</p>
-                  <div className="flex items-center gap-3 mt-1.5 text-[11px] font-mono-num">
-                    <span className="flex items-center gap-1">
-                      <Heart className="w-3 h-3" /> {post.likesCount ?? 0}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <MessageCircle className="w-3 h-3" /> {post.commentsCount ?? 0}
-                    </span>
-                    {post.allowRemix && (
-                      <span className="flex items-center gap-1 ml-auto">
-                        <Repeat className="w-3 h-3" /> Remix
+          <div className="columns-2 md:columns-3 lg:columns-4 gap-3.5 space-y-3.5">
+            {matchingPosts.map((post) => {
+              const nat = dimsByPostId[post.id];
+              const displayAspect = resolveDisplayAspectRatio({
+                aspectRatio: post.aspectRatio,
+                width: post.width,
+                height: post.height,
+                mediaDimensions: post.mediaDimensions,
+                naturalWidth: nat?.width,
+                naturalHeight: nat?.height,
+                fallbackRatio: 4 / 5,
+                maxHeightCss: '80vh',
+              });
+              return (
+                <button
+                  key={post.id}
+                  type="button"
+                  onClick={() => setFocusedPost(post)}
+                  style={displayAspect.frameStyle}
+                  className="break-inside-avoid block w-full mx-auto group relative rounded-card overflow-hidden border border-[#d4cfc5] dark:border-[#404040] bg-[#eae7e0] dark:bg-[#242424] text-left cursor-pointer"
+                >
+                  <GarmentImage
+                    src={post.thumbUrl || post.mediaUrl}
+                    mediaId={post.mediaId}
+                    alt={post.altText || post.caption || 'Fashion fit post'}
+                    fallbackLabel={post.caption || 'Fit post'}
+                    className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+                    onImageLoad={(dims) => {
+                      setDimsByPostId((prev) =>
+                        prev[post.id]
+                          ? prev
+                          : { ...prev, [post.id]: { width: dims.naturalWidth, height: dims.naturalHeight } }
+                      );
+                    }}
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/15 to-transparent flex flex-col justify-end p-3 text-[#f5f4f0]">
+                    <p className="text-xs font-semibold truncate">@{post.authorUsername || 'member'}</p>
+                    <p className="text-[11px] opacity-85 line-clamp-1">{post.caption || ''}</p>
+                    <div className="flex items-center gap-3 mt-1.5 text-[11px] font-mono-num">
+                      <span className="flex items-center gap-1">
+                        <Heart className="w-3 h-3" /> {post.likesCount ?? 0}
                       </span>
-                    )}
+                      <span className="flex items-center gap-1">
+                        <MessageCircle className="w-3 h-3" /> {post.commentsCount ?? 0}
+                      </span>
+                      {post.allowRemix && (
+                        <span className="flex items-center gap-1 ml-auto">
+                          <Repeat className="w-3 h-3" /> Remix
+                        </span>
+                      )}
+                    </div>
                   </div>
-                </div>
-              </button>
-            ))}
+                </button>
+              );
+            })}
           </div>
         )}
       </section>

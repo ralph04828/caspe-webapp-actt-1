@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { WEBP_QUALITY } from '../services/storageService';
 
-export type CropAspectKey = '1:1' | '3:4' | '4:5';
+export type CropAspectKey = '1:1' | '4:5' | '3:4' | '16:9';
 
 export interface PhotoCropState {
   zoom: number;
@@ -21,13 +21,22 @@ export interface PhotoCropState {
   aspectKey: CropAspectKey;
 }
 
+export interface PhotoCropResult {
+  croppedDataUrl: string;
+  cropState: PhotoCropState;
+  aspectRatio: CropAspectKey;
+  width: number;
+  height: number;
+}
+
 const ASPECT_CONFIG: Record<
   CropAspectKey,
   { label: string; viewW: number; viewH: number; ratioW: number; ratioH: number }
 > = {
+  '4:5': { label: '4:5 Portrait', viewW: 248, viewH: 310, ratioW: 4, ratioH: 5 },
   '1:1': { label: '1:1 Square', viewW: 260, viewH: 260, ratioW: 1, ratioH: 1 },
   '3:4': { label: '3:4 Story', viewW: 234, viewH: 312, ratioW: 3, ratioH: 4 },
-  '4:5': { label: '4:5 Portrait', viewW: 248, viewH: 310, ratioW: 4, ratioH: 5 },
+  '16:9': { label: '16:9 Wide', viewW: 272, viewH: 153, ratioW: 16, ratioH: 9 },
 };
 
 export function createDefaultCropState(aspectKey: CropAspectKey = '1:1'): PhotoCropState {
@@ -52,7 +61,7 @@ export interface PhotoCropEditorProps {
   doneLabel?: string;
   onBack: () => void;
   onChangePhotoFile?: (file: File) => void | Promise<void>;
-  onDone: (result: { croppedDataUrl: string; cropState: PhotoCropState }) => Promise<void> | void;
+  onDone: (result: PhotoCropResult) => Promise<void> | void;
 }
 
 export const PhotoCropEditor: React.FC<PhotoCropEditorProps> = ({
@@ -257,7 +266,19 @@ export const PhotoCropEditor: React.FC<PhotoCropEditorProps> = ({
         aspectKey,
       };
 
-      await onDone({ croppedDataUrl: dataUrl, cropState });
+      console.log('[SWOOOSH] Cropped image dimensions:', {
+        aspectRatio: aspectKey,
+        width: outW,
+        height: outH,
+      });
+
+      await onDone({
+        croppedDataUrl: dataUrl,
+        cropState,
+        aspectRatio: aspectKey,
+        width: outW,
+        height: outH,
+      });
     } catch (err: any) {
       console.error('Photo crop export failed:', err);
       setError(err?.message || 'Could not apply crop to this photo. Please try again.');
@@ -305,8 +326,8 @@ export const PhotoCropEditor: React.FC<PhotoCropEditorProps> = ({
       )}
 
       {allowAspectSwitch && (
-        <div className="flex items-center justify-center gap-1.5">
-          {(['1:1', '3:4', '4:5'] as CropAspectKey[]).map((key) => (
+        <div className="flex flex-wrap items-center justify-center gap-1.5">
+          {(['4:5', '1:1', '3:4', '16:9'] as CropAspectKey[]).map((key) => (
             <button
               key={key}
               type="button"
@@ -470,7 +491,7 @@ interface PhotoEditorModalProps {
   doneLabel?: string;
   onCancel: () => void;
   onChangePhotoFile?: (file: File) => void | Promise<void>;
-  onDone: (result: { croppedDataUrl: string; cropState: PhotoCropState }) => Promise<void> | void;
+  onDone: (result: PhotoCropResult) => Promise<void> | void;
 }
 
 export const PhotoEditorModal: React.FC<PhotoEditorModalProps> = ({

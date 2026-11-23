@@ -3,8 +3,12 @@ import { CommentPolicy, Outfit, OutfitPieceSnapshot, PostType, Visibility } from
 import { useAuth } from '../context/AuthContext';
 import { useWardrobe } from '../context/WardrobeContext';
 import { useSocial } from '../context/SocialContext';
-import { preparePreviewDataUrl, uploadImageAsset } from '../services/storageService';
+import { preparePreviewAsset, preparePreviewDataUrl, uploadImageAsset } from '../services/storageService';
 import { removeBackgroundClient } from '../utils/bgRemoval';
+import {
+  formatAspectRatioFromDimensions,
+  resolveDisplayAspectRatio,
+} from '../utils/aspectRatio';
 import {
   getDraftSessionKey,
   loadSessionJson,
@@ -34,6 +38,9 @@ interface StagedPhoto {
   rawDataUrl: string;
   croppedDataUrl?: string | null;
   cropState?: PhotoCropState | null;
+  aspectRatio?: string;
+  width?: number;
+  height?: number;
   cutoutDataUrl: string | null;
   useCutout: boolean;
   altText: string;
@@ -233,23 +240,29 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
     if (files.length === 0) return;
     setError(null);
     try {
+      const defaultSharedAspect = photos[0]?.cropState?.aspectKey || '4:5';
       if (files.length === 1) {
-        const compressed = await preparePreviewDataUrl(files[0]);
+        const compressed = await preparePreviewAsset(files[0]);
         setEditorState({
           mode: 'new',
-          sourceUrl: compressed,
-          initialCrop: createDefaultCropState('1:1'),
+          sourceUrl: compressed.dataUrl,
+          initialCrop: createDefaultCropState(defaultSharedAspect),
         });
         return;
       }
 
       const added: StagedPhoto[] = [];
       for (const file of files) {
-        const compressed = await preparePreviewDataUrl(file);
+        const compressed = await preparePreviewAsset(file);
         added.push({
-          rawDataUrl: compressed,
-          croppedDataUrl: compressed,
+          rawDataUrl: compressed.dataUrl,
+          croppedDataUrl: compressed.dataUrl,
           cropState: null,
+          aspectRatio: formatAspectRatioFromDimensions(compressed.width, compressed.height, {
+            clampToFeed: true,
+          }),
+          width: compressed.width,
+          height: compressed.height,
           cutoutDataUrl: null,
           useCutout: false,
           altText: '',
@@ -355,7 +368,15 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
 
     setSubmitting(true);
     try {
-      const uploadedList: { imageUrl: string; thumbUrl: string; mediaId: string; altText: string }[] = [];
+      const uploadedList: {
+        imageUrl: string;
+        thumbUrl: string;
+        mediaId: string;
+        altText: string;
+        width: number;
+        height: number;
+        aspectRatio?: string;
+      }[] = [];
       for (const p of photos) {
         const active =
           p.useCutout && p.cutoutDataUrl
@@ -367,8 +388,23 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
           thumbUrl: up.thumbUrl,
           mediaId: up.mediaId,
           altText: p.altText.trim() || 'Fit photo',
+          width: up.width,
+          height: up.height,
+          aspectRatio:
+            p.aspectRatio ||
+            p.cropState?.aspectKey ||
+            formatAspectRatioFromDimensions(up.width, up.height, { clampToFeed: true }),
         });
       }
+
+      const primaryPhoto = uploadedList[0];
+      const sharedAspectRatio =
+        primaryPhoto?.aspectRatio ||
+        (primaryPhoto
+          ? formatAspectRatioFromDimensions(primaryPhoto.width, primaryPhoto.height, {
+              clampToFeed: true,
+            })
+          : undefined);
 
       const plannedPieces =
         isPlannedCopy && chosenOutfit ? buildIndependentPlannedSnapshot(chosenOutfit) : undefined;
@@ -391,6 +427,12 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
         mediaIds: uploadedList.length ? uploadedList.map((u) => u.mediaId) : undefined,
         altText: uploadedList[0]?.altText,
         altTexts: uploadedList.length ? uploadedList.map((u) => u.altText) : undefined,
+        aspectRatio: sharedAspectRatio,
+        width: primaryPhoto?.width,
+        height: primaryPhoto?.height,
+        mediaDimensions: uploadedList.length
+          ? uploadedList.map((u) => ({ width: u.width, height: u.height }))
+          : undefined,
         occasion: occasion.trim() || undefined,
         styleTags: chosenOutfit
           ? [chosenOutfit.styleCategory, ...(chosenOutfit.tags || []).slice(0, 2)]
@@ -553,26 +595,34 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
                         p.useCutout && p.cutoutDataUrl
                           ? p.cutoutDataUrl
                           : p.croppedDataUrl || p.rawDataUrl;
+                      const previewAspect = resolveDisplayAspectRatio({
+                        aspectRatio: p.aspectRatio || p.cropState?.aspectKey,
+                        width: p.width,
+                        height: p.height,
+                        fallbackRatio: 1,
+                        maxHeightCss: '15rem',
+                      });
                       return (
                         <div
                           key={idx}
                           className="rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#171717] overflow-hidden p-1.5 space-y-1.5"
                         >
-                          <div className="relative aspect-square rounded-chip overflow-hidden bg-[#eae7e0] dark:bg-[#242424]">
-                            <GarmentImage src={preview} alt={p.altText || `Photo ${idx + 1}`} isCutout={p.useCutout} />
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setEditorState({
-                                  mode: 'edit',
-                                  index: idx,
-                                  sourceUrl: p.rawDataUrl,
-                                  initialCrop: p.cropState || createDefaultCropState('1:1'),
-                                })
-                              }
-                              aria-label={`Edit crop for photo ${idx + 1}`}
-                              className="absolute bottom-1.5 left-1.5 px-2 py-1 rounded-chip bg-black/75 text-white text-[10px] font-semibold inline-flex items-center gap-1 cursor-pointer hover:bg-black"
-                            >
+                          <div className="rounded-chip overflow-hidden bg-[#eae7e0] dark:bg-[#242424] flex items-center justify-center">
+                            <div className="relative w-full mx-auto overflow-hidden" style={previewAspect.frameStyle}>
+                              <GarmentImage src={preview} alt={p.altText || `Photo ${idx + 1}`} isCutout={p.useCutout} />
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setEditorState({
+                                    mode: 'edit',
+                                    index: idx,
+                                    sourceUrl: p.rawDataUrl,
+                                    initialCrop: p.cropState || createDefaultCropState('4:5'),
+                                  })
+                                }
+                                aria-label={`Edit crop for photo ${idx + 1}`}
+                                className="absolute bottom-1.5 left-1.5 px-2 py-1 rounded-chip bg-black/75 text-white text-[10px] font-semibold inline-flex items-center gap-1 cursor-pointer hover:bg-black"
+                              >
                               <Crop className="w-3 h-3" />
                               <span>Edit Crop</span>
                             </button>
@@ -584,6 +634,7 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
                             >
                               <X className="w-3.5 h-3.5" />
                             </button>
+                            </div>
                           </div>
                           <input
                             type="text"
@@ -751,7 +802,7 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
         open={Boolean(editorState)}
         sourceUrl={editorState?.sourceUrl || ''}
         initialCrop={editorState?.initialCrop}
-        defaultAspect="1:1"
+        defaultAspect="4:5"
         allowAspectSwitch={true}
         title="Crop Post Photo"
         subtitle="Adjust framing, then tap Done to keep this photo in your post."
@@ -764,12 +815,12 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
               ? {
                   ...prev,
                   sourceUrl: compressed,
-                  initialCrop: createDefaultCropState(prev.initialCrop?.aspectKey || '1:1'),
+                  initialCrop: createDefaultCropState(prev.initialCrop?.aspectKey || '4:5'),
                 }
               : null
           );
         }}
-        onDone={({ croppedDataUrl, cropState }) => {
+        onDone={({ croppedDataUrl, cropState, aspectRatio, width, height }) => {
           if (!editorState) return;
           if (editorState.mode === 'new') {
             setPhotos((prev) =>
@@ -779,6 +830,9 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
                   rawDataUrl: editorState.sourceUrl,
                   croppedDataUrl,
                   cropState,
+                  aspectRatio,
+                  width,
+                  height,
                   cutoutDataUrl: null,
                   useCutout: false,
                   altText: '',
@@ -795,6 +849,9 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
                       rawDataUrl: editorState.sourceUrl,
                       croppedDataUrl,
                       cropState,
+                      aspectRatio,
+                      width,
+                      height,
                       cutoutDataUrl: null,
                       useCutout: false,
                     }

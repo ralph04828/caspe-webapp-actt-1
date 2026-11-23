@@ -236,6 +236,10 @@ export interface SocialPost {
   mediaIds?: string[];
   altText?: string;
   altTexts?: string[];
+  aspectRatio?: string;
+  width?: number;
+  height?: number;
+  mediaDimensions?: { width: number; height: number }[];
   seasons?: SeasonTag[];
   piecesPreview?: OutfitPieceSnapshot[];
   styleTags: string[];
@@ -319,6 +323,9 @@ export interface MyDayStory {
   mediaUrl: string;
   thumbUrl?: string;
   mediaId?: string;
+  aspectRatio?: string;
+  width?: number;
+  height?: number;
   altText: string;
   caption?: string;
   styleTag?: string;

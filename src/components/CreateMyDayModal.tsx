@@ -16,6 +16,7 @@ import { useAuth } from '../context/AuthContext';
 import { useSocial } from '../context/SocialContext';
 import { MyDayVisibility, STYLE_CATEGORIES } from '../types';
 import { preparePreviewDataUrl, uploadImageAsset } from '../services/storageService';
+import { resolveDisplayAspectRatio } from '../utils/aspectRatio';
 import {
   getDraftSessionKey,
   loadSessionJson,
@@ -40,6 +41,9 @@ interface MyDayDraft {
   rawPhotoUrl: string;
   cropState: PhotoCropState | null;
   croppedPhotoUrl: string;
+  aspectRatio?: string;
+  width?: number;
+  height?: number;
   caption: string;
   styleTag: string;
   altText: string;
@@ -53,6 +57,7 @@ function makeEmptyMyDayDraft(): MyDayDraft {
     rawPhotoUrl: '',
     cropState: null,
     croppedPhotoUrl: '',
+    aspectRatio: '3:4',
     caption: '',
     styleTag: 'Streetwear',
     altText: '',
@@ -200,6 +205,9 @@ export const CreateMyDayModal: React.FC<CreateMyDayModalProps> = ({
         mediaUrl: uploaded.imageUrl,
         thumbUrl: uploaded.thumbUrl,
         mediaId: uploaded.mediaId,
+        aspectRatio: draft.aspectRatio || draft.cropState?.aspectKey || '3:4',
+        width: draft.width || uploaded.width,
+        height: draft.height || uploaded.height,
         altText: draft.altText.trim() || `${userProfile.displayName}'s ${draft.styleTag} MyDay`,
         caption: draft.caption.trim() || undefined,
         styleTag: draft.styleTag,
@@ -331,7 +339,7 @@ export const CreateMyDayModal: React.FC<CreateMyDayModalProps> = ({
                 sourceUrl={draft.rawPhotoUrl}
                 initialCrop={draft.cropState}
                 defaultAspect="3:4"
-                allowAspectSwitch={false}
+                allowAspectSwitch={true}
                 title="Crop & Frame MyDay"
                 subtitle="Drag to reposition and adjust zoom, then tap Done to add caption & visibility."
                 backLabel="Back"
@@ -342,11 +350,14 @@ export const CreateMyDayModal: React.FC<CreateMyDayModalProps> = ({
                   })
                 }
                 onChangePhotoFile={processSelectedFile}
-                onDone={({ croppedDataUrl, cropState }) => {
+                onDone={({ croppedDataUrl, cropState, aspectRatio, width, height }) => {
                   updateDraft({
                     step: 'details',
                     croppedPhotoUrl: croppedDataUrl,
                     cropState,
+                    aspectRatio,
+                    width,
+                    height,
                   });
                 }}
               />
@@ -357,7 +368,18 @@ export const CreateMyDayModal: React.FC<CreateMyDayModalProps> = ({
               <form onSubmit={handleSubmit} className="space-y-4">
                 {/* Cropped Photo Preview */}
                 {draft.croppedPhotoUrl ? (
-                  <div className="relative rounded-card overflow-hidden border border-[#d4cfc5] dark:border-[#404040] bg-[#171717] aspect-[3/4] max-h-64 mx-auto">
+                  <div
+                    className="relative w-full rounded-card overflow-hidden border border-[#d4cfc5] dark:border-[#404040] bg-[#171717] mx-auto"
+                    style={
+                      resolveDisplayAspectRatio({
+                        aspectRatio: draft.aspectRatio || draft.cropState?.aspectKey,
+                        width: draft.width,
+                        height: draft.height,
+                        fallbackRatio: 3 / 4,
+                        maxHeightCss: '18rem',
+                      }).frameStyle
+                    }
+                  >
                     <img
                       src={draft.croppedPhotoUrl}
                       alt={draft.altText || 'MyDay preview'}

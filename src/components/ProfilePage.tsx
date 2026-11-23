@@ -15,6 +15,7 @@ import { useWardrobe } from '../context/WardrobeContext';
 import { useSocial } from '../context/SocialContext';
 import { getUserProfile } from '../services/firestoreService';
 import { daysSince, formatRelativeTime } from '../utils/formatters';
+import { resolveDisplayAspectRatio } from '../utils/aspectRatio';
 import { AvatarImage } from './AvatarImage';
 import { GarmentImage } from './GarmentImage';
 import { PostCard } from './PostCard';
@@ -87,6 +88,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
   const [profileWardrobe, setProfileWardrobe] = useState<ClothingItem[]>([]);
   const [profileOutfits, setProfileOutfits] = useState<Outfit[]>([]);
   const [profileStories, setProfileStories] = useState<MyDayStory[]>([]);
+  const [naturalDimsById, setNaturalDimsById] = useState<Record<string, { width: number; height: number }>>({});
   const [tab, setTab] = useState<'posts' | 'wardrobe' | 'lookbook' | 'myday' | 'friends' | 'stats' | 'saved'>('posts');
 
   useEffect(() => {
@@ -513,33 +515,52 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
                 No visible lookbook outfits yet.
               </p>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {profileOutfits.map((outfit) => (
-                  <div
-                    key={outfit.id}
-                    className="rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] overflow-hidden"
-                  >
-                    <div className="aspect-[4/3] bg-[#eae7e0] dark:bg-[#171717]">
-                      <GarmentImage
-                        src={outfit.coverImageUrl}
-                        mediaId={outfit.mediaId}
-                        alt={outfit.name}
-                        fallbackLabel={outfit.name}
-                      />
+              <div className="columns-1 sm:columns-2 lg:columns-3 gap-4 space-y-4">
+                {profileOutfits.map((outfit) => {
+                  const nat = naturalDimsById[outfit.id];
+                  const coverAspect = resolveDisplayAspectRatio({
+                    naturalWidth: nat?.width,
+                    naturalHeight: nat?.height,
+                    fallbackRatio: 4 / 5,
+                    maxHeightCss: '80vh',
+                  });
+                  return (
+                    <div
+                      key={outfit.id}
+                      className="break-inside-avoid rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] overflow-hidden"
+                    >
+                      <div className="bg-[#eae7e0] dark:bg-[#171717]">
+                        <div className="w-full mx-auto overflow-hidden" style={coverAspect.frameStyle}>
+                          <GarmentImage
+                            src={outfit.coverImageUrl}
+                            mediaId={outfit.mediaId}
+                            alt={outfit.name}
+                            fallbackLabel={outfit.name}
+                            className="w-full h-full object-cover"
+                            onImageLoad={(dims) => {
+                              setNaturalDimsById((prev) =>
+                                prev[outfit.id]
+                                  ? prev
+                                  : { ...prev, [outfit.id]: { width: dims.naturalWidth, height: dims.naturalHeight } }
+                              );
+                            }}
+                          />
+                        </div>
+                      </div>
+                      <div className="p-3.5 space-y-1">
+                        <span className="px-2 py-0.5 rounded-chip text-[10px] bg-[#eae7e0] dark:bg-[#303030] uppercase">
+                          {outfit.styleCategory}
+                        </span>
+                        <p className="text-sm font-display font-bold truncate">{outfit.name}</p>
+                        {outfit.description && (
+                          <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8] line-clamp-2">
+                            {outfit.description}
+                          </p>
+                        )}
+                      </div>
                     </div>
-                    <div className="p-3.5 space-y-1">
-                      <span className="px-2 py-0.5 rounded-chip text-[10px] bg-[#eae7e0] dark:bg-[#303030] uppercase">
-                        {outfit.styleCategory}
-                      </span>
-                      <p className="text-sm font-display font-bold truncate">{outfit.name}</p>
-                      {outfit.description && (
-                        <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8] line-clamp-2">
-                          {outfit.description}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )
           )}
@@ -550,26 +571,46 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
                 No active MyDay stories right now.
               </p>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3.5">
-                {profileStories.map((st) => (
-                  <button
-                    key={st.id}
-                    type="button"
-                    onClick={() => onViewStory?.(st.userId)}
-                    className="relative aspect-[3/4] rounded-card overflow-hidden border border-[#d4cfc5] dark:border-[#404040] bg-[#171717] text-left cursor-pointer"
-                  >
-                    <GarmentImage
-                      src={st.mediaUrl}
-                      mediaId={st.mediaId}
-                      alt={st.altText}
-                      className="w-full h-full object-cover"
-                    />
-                    <div className="absolute inset-x-0 bottom-0 p-2.5 bg-gradient-to-t from-black/80 to-transparent text-[#f5f4f0]">
-                      <p className="text-xs font-medium line-clamp-2">{st.caption || st.styleTag || 'MyDay'}</p>
-                      <p className="text-[10px] opacity-75 mt-0.5">{formatRelativeTime(st.createdAt)}</p>
-                    </div>
-                  </button>
-                ))}
+              <div className="columns-2 sm:columns-3 md:columns-4 gap-3.5 space-y-3.5">
+                {profileStories.map((st) => {
+                  const nat = naturalDimsById[st.id];
+                  const stAspect = resolveDisplayAspectRatio({
+                    aspectRatio: st.aspectRatio,
+                    width: st.width,
+                    height: st.height,
+                    naturalWidth: nat?.width,
+                    naturalHeight: nat?.height,
+                    fallbackRatio: 3 / 4,
+                    maxHeightCss: '80vh',
+                  });
+                  return (
+                    <button
+                      key={st.id}
+                      type="button"
+                      onClick={() => onViewStory?.(st.userId)}
+                      style={stAspect.frameStyle}
+                      className="break-inside-avoid block w-full mx-auto relative rounded-card overflow-hidden border border-[#d4cfc5] dark:border-[#404040] bg-[#171717] text-left cursor-pointer"
+                    >
+                      <GarmentImage
+                        src={st.mediaUrl}
+                        mediaId={st.mediaId}
+                        alt={st.altText}
+                        className="w-full h-full object-cover"
+                        onImageLoad={(dims) => {
+                          setNaturalDimsById((prev) =>
+                            prev[st.id]
+                              ? prev
+                              : { ...prev, [st.id]: { width: dims.naturalWidth, height: dims.naturalHeight } }
+                          );
+                        }}
+                      />
+                      <div className="absolute inset-x-0 bottom-0 p-2.5 bg-gradient-to-t from-black/80 to-transparent text-[#f5f4f0]">
+                        <p className="text-xs font-medium line-clamp-2">{st.caption || st.styleTag || 'MyDay'}</p>
+                        <p className="text-[10px] opacity-75 mt-0.5">{formatRelativeTime(st.createdAt)}</p>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             )
           )}

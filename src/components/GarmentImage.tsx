@@ -11,6 +11,7 @@ interface GarmentImageProps {
   isPrivatePlaceholder?: boolean;
   isCutout?: boolean;
   onReuploadClick?: () => void;
+  onImageLoad?: (dims: { naturalWidth: number; naturalHeight: number }) => void;
 }
 
 export const GarmentImage: React.FC<GarmentImageProps> = ({
@@ -22,6 +23,7 @@ export const GarmentImage: React.FC<GarmentImageProps> = ({
   isPrivatePlaceholder = false,
   isCutout = false,
   onReuploadClick,
+  onImageLoad,
 }) => {
   const needsAsyncResolve = Boolean(parseMediaRef(src) || (!src && mediaId));
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(() =>
@@ -61,6 +63,9 @@ export const GarmentImage: React.FC<GarmentImageProps> = ({
       setResolvedUrl(res.url);
       setStatus(res.status);
       setLoading(false);
+      if (res.width && res.height) {
+        onImageLoad?.({ naturalWidth: res.width, naturalHeight: res.height });
+      }
     });
 
     return () => {
@@ -140,6 +145,12 @@ export const GarmentImage: React.FC<GarmentImageProps> = ({
       loading="lazy"
       decoding="async"
       referrerPolicy="no-referrer"
+      onLoad={(e) => {
+        const el = e.currentTarget;
+        if (el.naturalWidth && el.naturalHeight) {
+          onImageLoad?.({ naturalWidth: el.naturalWidth, naturalHeight: el.naturalHeight });
+        }
+      }}
       onError={() => setImgFailed(true)}
       className={`${className} ${isCutout ? 'object-contain p-2 drop-shadow-sm' : ''}`}
     />
