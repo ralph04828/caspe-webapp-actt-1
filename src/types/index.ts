@@ -407,13 +407,16 @@ export interface ChatMessage {
 export type NotificationType =
   | 'like'
   | 'comment'
+  | 'reply'
   | 'follow'
   | 'follow_request'
   | 'follow_accept'
   | 'friend_request'
   | 'friend_accept'
+  | 'friend_accepted'
   | 'message'
   | 'story_reply'
+  | 'myday_reaction'
   | 'mention'
   | 'remix';
 
@@ -425,7 +428,10 @@ export interface AppNotification {
   actorName: string;
   actorPhotoUrl?: string;
   type: NotificationType;
+  targetType?: 'post' | 'comment' | 'user' | 'story' | 'conversation';
   targetId?: string;
+  commentId?: string;
+  commentSnippet?: string;
   targetPreview?: string;
   read: boolean;
   createdAt: string;

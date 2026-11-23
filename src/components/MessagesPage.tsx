@@ -22,6 +22,7 @@ import { useSocial } from '../context/SocialContext';
 import { ChatConversation, ChatMessage, UserProfile } from '../types';
 import {
   deleteConversationMessageFirestore,
+  getConversationDoc,
   loadOlderConversationMessages,
   sendConversationMessageFirestore,
   setConversationTypingFirestore,
@@ -37,6 +38,7 @@ import {
 } from '../utils/formatters';
 import { AvatarImage } from './AvatarImage';
 import { GarmentImage } from './GarmentImage';
+import { PhotoPickerButton } from './PhotoPickerButton';
 import { cleanData } from '../utils/cleanData';
 
 interface MessagesPageProps {
@@ -141,12 +143,16 @@ export const MessagesPage: React.FC<MessagesPageProps> = ({
     [discoverProfiles, friendIds]
   );
 
+  const [verifiedConv, setVerifiedConv] = useState<ChatConversation | null>(null);
+
   const activeConv: ChatConversation | undefined = useMemo(
-    () => conversations.find((c) => c.id === activeConvId),
-    [conversations, activeConvId]
+    () =>
+      conversations.find((c) => c.id === activeConvId) ||
+      (verifiedConv?.id === activeConvId ? verifiedConv : undefined),
+    [conversations, verifiedConv, activeConvId]
   );
 
-  // Subscribe to active DM/Group messages (latest 30)
+  // Subscribe to active DM/Group messages (latest 30) only once membership doc exists
   useEffect(() => {
     setChatError(null);
     setConvOldestDoc(null);
@@ -159,26 +165,56 @@ export const MessagesPage: React.FC<MessagesPageProps> = ({
       markConvRead(activeConvId);
       return;
     }
-    markConvRead(activeConvId);
-    const unsub = subscribeConversationMessages(
-      activeConvId,
-      30,
-      (msgs, oldest) => {
-        setConvMessages(msgs);
-        setConvOldestDoc(oldest);
-        markConvRead(activeConvId);
-      },
-      (err) => {
-        const msg = err?.message || '';
-        setChatError(
-          msg.toLowerCase().includes('quota')
-            ? 'Daily Spark plan limit reached. Try again later.'
-            : 'Could not load messages for this chat.'
-        );
+
+    let cancelled = false;
+    let unsub: (() => void) | null = null;
+
+    const attach = async () => {
+      const known =
+        conversations.find((c) => c.id === activeConvId) ||
+        (verifiedConv?.id === activeConvId ? verifiedConv : null);
+
+      let resolvedConv = known;
+      if (!resolvedConv) {
+        resolvedConv = await getConversationDoc(activeConvId);
+        if (cancelled) return;
+        if (resolvedConv) {
+          setVerifiedConv(resolvedConv);
+        }
       }
-    );
-    return () => unsub();
-  }, [activeConvId, userProfile?.uid, isDemoMode]);
+
+      if (!resolvedConv) {
+        setConvMessages([]);
+        return;
+      }
+
+      markConvRead(activeConvId);
+      unsub = subscribeConversationMessages(
+        activeConvId,
+        30,
+        (msgs, oldest) => {
+          setConvMessages(msgs);
+          setConvOldestDoc(oldest);
+          markConvRead(activeConvId);
+        },
+        (err) => {
+          console.error('Messages subscription failed:', err);
+          const msg = err?.message || '';
+          setChatError(
+            msg.toLowerCase().includes('quota')
+              ? 'Daily Spark plan limit reached. Try again later.'
+              : msg || 'Could not load messages for this chat.'
+          );
+        }
+      );
+    };
+
+    attach();
+    return () => {
+      cancelled = true;
+      if (unsub) unsub();
+    };
+  }, [activeConvId, userProfile?.uid, isDemoMode, Boolean(conversations.find((c) => c.id === activeConvId))]);
 
   useEffect(() => {
     if (isDemoMode && activeConvId) {
@@ -245,9 +281,8 @@ export const MessagesPage: React.FC<MessagesPageProps> = ({
     }
   };
 
-  const handleStageImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !activeConv) return;
+  const handleStageImageFile = async (file: File) => {
+    if (!activeConv) return;
     setChatError(null);
     setUploadingPhoto(true);
     try {
@@ -261,16 +296,15 @@ export const MessagesPage: React.FC<MessagesPageProps> = ({
         altText: '',
       });
     } catch (err: any) {
-      setChatError(err?.message || 'Could not upload image.');
+      const msg = err?.message || 'Could not upload image.';
+      console.error('Chat image upload failed:', err);
+      setChatError(msg);
     } finally {
       setUploadingPhoto(false);
-      e.target.value = '';
     }
   };
 
-  const handleUploadNewGroupPhoto = async (e: React.ChangeEvent<HTMLInputElement>, existingConvId?: string) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleUploadNewGroupPhotoFile = async (file: File, existingConvId?: string) => {
     setUploadingGroupPhoto(true);
     setChatError(null);
     try {
@@ -290,10 +324,11 @@ export const MessagesPage: React.FC<MessagesPageProps> = ({
         setGroupPhotoDraft({ photoUrl: uploaded.thumbUrl, mediaId: uploaded.mediaId });
       }
     } catch (err: any) {
-      setChatError(err?.message || 'Could not upload group photo.');
+      const msg = err?.message || 'Could not upload group photo.';
+      console.error('Group photo upload failed:', err);
+      setChatError(msg);
     } finally {
       setUploadingGroupPhoto(false);
-      e.target.value = '';
     }
   };
 
@@ -372,10 +407,13 @@ export const MessagesPage: React.FC<MessagesPageProps> = ({
     setChatError(null);
     try {
       const conv = await startDmWithFriend(target);
+      setVerifiedConv(conv);
       setShowNewDm(false);
       setActiveConvId(conv.id);
     } catch (err: any) {
-      setChatError(err?.message || 'Could not start DM.');
+      const msg = err?.message || 'Could not start DM.';
+      console.error('Start DM failed:', err);
+      setChatError(msg);
     }
   };
 
@@ -494,18 +532,61 @@ export const MessagesPage: React.FC<MessagesPageProps> = ({
           </div>
 
           <div className="flex-1 overflow-y-auto p-2.5 space-y-1.5">
+            {friendProfiles.length > 0 && (
+              <div className="pb-2 mb-2 border-b border-[#d4cfc5]/70 dark:border-[#404040]/70">
+                <p className="px-1.5 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#b0b0b0]">
+                  Friends — Start a chat
+                </p>
+                <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                  {friendProfiles.map((f) => (
+                    <button
+                      key={f.uid}
+                      type="button"
+                      onClick={() => handleStartDm(f)}
+                      title={`Message @${f.username}`}
+                      className="flex flex-col items-center gap-1 p-1.5 rounded-control hover:bg-[#f5f4f0] dark:hover:bg-[#2c2c2c] shrink-0 max-w-[68px] cursor-pointer"
+                    >
+                      <AvatarImage
+                        src={f.photoURL}
+                        mediaId={f.mediaId}
+                        name={f.displayName}
+                        sizeClass="w-9 h-9"
+                        textSizeClass="text-xs"
+                      />
+                      <span className="text-[10px] font-medium truncate w-full text-center">
+                        {(f.displayName || f.username).split(' ')[0]}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {chatError && !activeConv && (
+              <div
+                role="alert"
+                className="p-2.5 rounded-control border border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300 text-[11px]"
+              >
+                {chatError}
+              </div>
+            )}
+
             {conversations.length === 0 ? (
               <div className="p-4 text-center space-y-2.5">
                 <p className="text-xs text-[#4e4c46] dark:text-[#b0b0b0]">
-                  No conversations yet. Add friends to message them directly or start a friend group chat.
+                  {friendProfiles.length > 0
+                    ? 'Tap a friend above or "New DM" to start messaging.'
+                    : 'No conversations yet. Add friends to message them directly or start a friend group chat.'}
                 </p>
-                <button
-                  type="button"
-                  onClick={onNavigatePeople}
-                  className="px-3.5 py-2 min-h-[40px] rounded-control bg-[#171717] dark:bg-[#e5e1da] text-[#f5f4f0] dark:text-[#171717] text-xs font-bold cursor-pointer"
-                >
-                  Find Friends
-                </button>
+                {friendProfiles.length === 0 && (
+                  <button
+                    type="button"
+                    onClick={onNavigatePeople}
+                    className="px-3.5 py-2 min-h-[40px] rounded-control bg-[#171717] dark:bg-[#e5e1da] text-[#f5f4f0] dark:text-[#171717] text-xs font-bold cursor-pointer"
+                  >
+                    Find Friends
+                  </button>
+                )}
               </div>
             ) : (
               conversations.map((conv) => {
@@ -948,19 +1029,16 @@ export const MessagesPage: React.FC<MessagesPageProps> = ({
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <label
+                  <PhotoPickerButton
+                    label=""
+                    busy={uploadingPhoto}
                     title="Attach WebP photo"
+                    ariaLabel="Attach WebP photo"
+                    icon={<ImageIcon className="w-4 h-4" />}
                     className="w-11 h-11 rounded-control border border-[#d4cfc5] dark:border-[#404040] flex items-center justify-center hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer shrink-0"
-                  >
-                    <ImageIcon className="w-4 h-4" />
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={handleStageImage}
-                      disabled={uploadingPhoto}
-                      className="hidden"
-                    />
-                  </label>
+                    onFileSelected={handleStageImageFile}
+                    onError={(msg) => setChatError(msg)}
+                  />
                   <input
                     type="text"
                     maxLength={1000}
@@ -1074,17 +1152,15 @@ export const MessagesPage: React.FC<MessagesPageProps> = ({
                 sizeClass="w-12 h-12"
                 textSizeClass="text-base"
               />
-              <label className="px-3 py-2 min-h-[40px] rounded-control border border-[#d4cfc5] dark:border-[#404040] text-xs font-semibold flex items-center gap-1.5 cursor-pointer hover:bg-[#eae7e0] dark:hover:bg-[#303030]">
-                <Upload className="w-3.5 h-3.5" />
-                <span>{uploadingGroupPhoto ? 'Uploading...' : 'Group Photo (Optional)'}</span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => handleUploadNewGroupPhoto(e)}
-                  disabled={uploadingGroupPhoto}
-                  className="sr-only"
-                />
-              </label>
+              <PhotoPickerButton
+                label="Group Photo (Optional)"
+                busyLabel="Uploading..."
+                busy={uploadingGroupPhoto}
+                icon={<Upload className="w-3.5 h-3.5" />}
+                className="px-3 py-2 min-h-[40px] rounded-control border border-[#d4cfc5] dark:border-[#404040] text-xs font-semibold flex items-center gap-1.5 cursor-pointer hover:bg-[#eae7e0] dark:hover:bg-[#303030]"
+                onFileSelected={(file) => handleUploadNewGroupPhotoFile(file)}
+                onError={(msg) => setChatError(msg)}
+              />
             </div>
             <input
               type="text"
@@ -1157,17 +1233,15 @@ export const MessagesPage: React.FC<MessagesPageProps> = ({
                 sizeClass="w-12 h-12"
                 textSizeClass="text-base"
               />
-              <label className="px-3 py-2 min-h-[40px] rounded-control border border-[#d4cfc5] dark:border-[#404040] text-xs font-semibold flex items-center gap-1.5 cursor-pointer hover:bg-[#eae7e0] dark:hover:bg-[#303030]">
-                <Upload className="w-3.5 h-3.5" />
-                <span>{uploadingGroupPhoto ? 'Updating...' : 'Change Group Photo'}</span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => handleUploadNewGroupPhoto(e, activeConv.id)}
-                  disabled={uploadingGroupPhoto}
-                  className="sr-only"
-                />
-              </label>
+              <PhotoPickerButton
+                label="Change Group Photo"
+                busyLabel="Updating..."
+                busy={uploadingGroupPhoto}
+                icon={<Upload className="w-3.5 h-3.5" />}
+                className="px-3 py-2 min-h-[40px] rounded-control border border-[#d4cfc5] dark:border-[#404040] text-xs font-semibold flex items-center gap-1.5 cursor-pointer hover:bg-[#eae7e0] dark:hover:bg-[#303030]"
+                onFileSelected={(file) => handleUploadNewGroupPhotoFile(file, activeConv.id)}
+                onError={(msg) => setChatError(msg)}
+              />
             </div>
             <div className="flex items-center gap-2">
               <input

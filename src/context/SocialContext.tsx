@@ -667,8 +667,9 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
             actorName: userProfile.displayName,
             actorPhotoUrl: userProfile.photoURL,
             type: 'mention',
+            targetType: 'post',
             targetId,
-            targetPreview: preview.slice(0, 80),
+            commentSnippet: preview.slice(0, 80),
             read: false,
             createdAt: new Date().toISOString(),
           })
@@ -724,11 +725,11 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
       if (!altText) altText = params.item.altText;
     }
 
-    const mediaUrls = params.mediaUrls?.length ? params.mediaUrls.slice(0, 4) : mediaUrl ? [mediaUrl] : undefined;
-    const thumbUrls = params.thumbUrls?.length ? params.thumbUrls.slice(0, 4) : thumbUrl ? [thumbUrl] : undefined;
-    const mediaIds = params.mediaIds?.length ? params.mediaIds.slice(0, 4) : mediaId ? [mediaId] : undefined;
+    const mediaUrls = params.mediaUrls?.length ? params.mediaUrls.slice(0, 10) : mediaUrl ? [mediaUrl] : undefined;
+    const thumbUrls = params.thumbUrls?.length ? params.thumbUrls.slice(0, 10) : thumbUrl ? [thumbUrl] : undefined;
+    const mediaIds = params.mediaIds?.length ? params.mediaIds.slice(0, 10) : mediaId ? [mediaId] : undefined;
     const mediaDimensions = params.mediaDimensions?.length
-      ? params.mediaDimensions.slice(0, 4)
+      ? params.mediaDimensions.slice(0, 10)
       : params.width && params.height
       ? [{ width: params.width, height: params.height }]
       : undefined;
@@ -805,8 +806,8 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
             actorName: userProfile.displayName,
             actorPhotoUrl: userProfile.photoURL,
             type: 'remix',
+            targetType: 'post',
             targetId: post.id,
-            targetPreview: (post.caption || '').slice(0, 80),
             read: false,
             createdAt: new Date().toISOString(),
           })
@@ -886,8 +887,8 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
           actorName: userProfile.displayName,
           actorPhotoUrl: userProfile.photoURL,
           type: 'like',
+          targetType: 'post',
           targetId: post.id,
-          targetPreview: (post.caption || '').slice(0, 70),
           read: false,
           createdAt: new Date().toISOString(),
         })
@@ -984,6 +985,7 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
     }
 
     await addCommentFirestore(comment);
+    const snippet = trimmed.slice(0, 90);
     if (post.userId !== userProfile.uid) {
       await createNotification(
         cleanData({
@@ -993,13 +995,44 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
           actorUsername: userProfile.username,
           actorName: userProfile.displayName,
           actorPhotoUrl: userProfile.photoURL,
-          type: 'comment',
+          type: replyTo ? 'reply' : 'comment',
+          targetType: 'post',
           targetId: post.id,
-          targetPreview: trimmed.slice(0, 80),
+          commentId: comment.id,
+          commentSnippet: snippet,
           read: false,
           createdAt: new Date().toISOString(),
         })
       );
+    }
+    if (replyTo) {
+      const parentUser = discoverProfiles.find(
+        (p) => p.usernameLower === replyTo.username.toLowerCase()
+      );
+      if (
+        parentUser &&
+        parentUser.uid !== userProfile.uid &&
+        parentUser.uid !== post.userId &&
+        !blockedSet.has(parentUser.uid)
+      ) {
+        await createNotification(
+          cleanData({
+            id: `notif_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            recipientId: parentUser.uid,
+            actorId: userProfile.uid,
+            actorUsername: userProfile.username,
+            actorName: userProfile.displayName,
+            actorPhotoUrl: userProfile.photoURL,
+            type: 'reply',
+            targetType: 'post',
+            targetId: post.id,
+            commentId: comment.id,
+            commentSnippet: snippet,
+            read: false,
+            createdAt: new Date().toISOString(),
+          })
+        );
+      }
     }
     await notifyMentions(mentions, post.id, trimmed);
     return comment;
@@ -1101,9 +1134,9 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
         actorUsername: userProfile.username,
         actorName: userProfile.displayName,
         actorPhotoUrl: userProfile.photoURL,
-        type: 'friend_accept',
+        type: 'friend_accepted',
+        targetType: 'user',
         targetId: userProfile.uid,
-        targetPreview: 'Accepted your friend request',
         read: false,
         createdAt: new Date().toISOString(),
       })
@@ -1422,9 +1455,10 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
         actorUsername: userProfile.username,
         actorName: userProfile.displayName,
         actorPhotoUrl: userProfile.photoURL,
-        type: 'story_reply',
+        type: 'myday_reaction',
+        targetType: 'conversation',
         targetId: convId,
-        targetPreview: messageText.trim().slice(0, 80),
+        commentSnippet: messageText.trim().slice(0, 80),
         read: false,
         createdAt: new Date().toISOString(),
       })

@@ -1,5 +1,5 @@
-import React from 'react';
-import { NavSection } from '../types';
+import React, { useState } from 'react';
+import { AppNotification, NavSection, UserProfile } from '../types';
 import { useSocial } from '../context/SocialContext';
 import { formatRelativeTime } from '../utils/formatters';
 import { AvatarImage } from './AvatarImage';
@@ -9,6 +9,7 @@ import {
   CheckCheck,
   Heart,
   MessageCircle,
+  MessageSquare,
   Repeat,
   UserPlus,
   AtSign,
@@ -17,17 +18,74 @@ import {
 
 interface NotificationsPageProps {
   onOpenProfile: (userId: string) => void;
+  onOpenPost?: (
+    postId: string,
+    options?: { openComments?: boolean; commentId?: string }
+  ) => void;
+  onOpenConversation?: (conversationId?: string) => void;
+  onMessageUser?: (target: UserProfile) => void;
   onNavigate?: (section: NavSection) => void;
   onToast: (msg: string, type?: 'success' | 'error') => void;
 }
 
+function getNotificationPhrase(type: AppNotification['type']): string {
+  switch (type) {
+    case 'like':
+      return 'liked your post';
+    case 'comment':
+      return 'commented on your post';
+    case 'reply':
+      return 'replied to your comment';
+    case 'friend_request':
+      return 'sent you a friend request';
+    case 'friend_accept':
+    case 'friend_accepted':
+      return 'accepted your friend request';
+    case 'follow':
+      return 'started following you';
+    case 'follow_request':
+      return 'requested to follow you';
+    case 'follow_accept':
+      return 'accepted your follow request';
+    case 'message':
+      return 'sent you a message';
+    case 'story_reply':
+    case 'myday_reaction':
+      return 'replied to your MyDay';
+    case 'remix':
+      return 'remixed your fit';
+    case 'mention':
+      return 'mentioned you in a post';
+    default:
+      return 'interacted with your profile';
+  }
+}
+
+function getNotificationSnippet(n: AppNotification): string | null {
+  if (
+    n.type === 'comment' ||
+    n.type === 'reply' ||
+    n.type === 'mention' ||
+    n.type === 'story_reply' ||
+    n.type === 'myday_reaction'
+  ) {
+    const raw = (n.commentSnippet || n.targetPreview || '').trim();
+    return raw || null;
+  }
+  return null;
+}
+
 export const NotificationsPage: React.FC<NotificationsPageProps> = ({
   onOpenProfile,
+  onOpenPost,
+  onOpenConversation,
+  onMessageUser,
   onNavigate,
   onToast,
 }) => {
   const {
     notifications,
+    discoverProfiles,
     incomingFollows,
     incomingFriendRequests,
     unreadNotificationsCount,
@@ -39,15 +97,50 @@ export const NotificationsPage: React.FC<NotificationsPageProps> = ({
     removeOrCancelFriend,
   } = useSocial();
 
+  const [acceptedFriends, setAcceptedFriends] = useState<UserProfile[]>([]);
+
   const pendingRequests = incomingFollows.filter((f) => f.status === 'pending');
+
+  const resolveActorProfile = (n: {
+    actorId: string;
+    actorUsername: string;
+    actorName?: string;
+    actorPhotoUrl?: string;
+  }): UserProfile => {
+    const found = discoverProfiles.find((p) => p.uid === n.actorId);
+    if (found) return found;
+    return {
+      uid: n.actorId,
+      email: '',
+      username: n.actorUsername,
+      usernameLower: (n.actorUsername || '').toLowerCase(),
+      displayName: n.actorName || n.actorUsername,
+      photoURL: n.actorPhotoUrl,
+      bio: '',
+      stylePreference: '',
+      styleTags: [],
+      followersCount: 0,
+      followingCount: 0,
+      friendsCount: 1,
+      postsCount: 0,
+      isPublic: true,
+      defaultItemVisibility: 'public',
+      defaultOutfitVisibility: 'public',
+      autoDirtyOnWear: false,
+      isAdultConfirmed: true,
+      createdAt: new Date().toISOString(),
+    };
+  };
 
   const getIcon = (type: string) => {
     switch (type) {
       case 'like':
         return Heart;
       case 'comment':
+      case 'reply':
       case 'message':
       case 'story_reply':
+      case 'myday_reaction':
         return MessageCircle;
       case 'remix':
         return Repeat;
@@ -56,6 +149,35 @@ export const NotificationsPage: React.FC<NotificationsPageProps> = ({
       default:
         return UserPlus;
     }
+  };
+
+  const handleOpenNotification = (n: AppNotification) => {
+    if (!n.read) markNotifRead(n.id);
+
+    if (n.type === 'message' || n.type === 'story_reply' || n.type === 'myday_reaction') {
+      if (onOpenConversation) {
+        onOpenConversation(n.targetId);
+      } else if (onNavigate) {
+        onNavigate('messages');
+      }
+      return;
+    }
+
+    if (n.type === 'comment' || n.type === 'reply') {
+      if (n.targetId && onOpenPost) {
+        onOpenPost(n.targetId, { openComments: true, commentId: n.commentId });
+      }
+      return;
+    }
+
+    if (n.type === 'like' || n.type === 'remix' || n.type === 'mention') {
+      if (n.targetId && onOpenPost) {
+        onOpenPost(n.targetId, { openComments: n.type === 'mention' });
+      }
+      return;
+    }
+
+    onOpenProfile(n.actorId);
   };
 
   return (
@@ -114,8 +236,21 @@ export const NotificationsPage: React.FC<NotificationsPageProps> = ({
                   <button
                     type="button"
                     onClick={async () => {
-                      await acceptFriendRequest(req);
-                      onToast(`You and @${req.requesterUsername} are now friends!`);
+                      try {
+                        await acceptFriendRequest(req);
+                        const profile = resolveActorProfile({
+                          actorId: req.requesterId,
+                          actorUsername: req.requesterUsername,
+                          actorName: req.requesterName,
+                          actorPhotoUrl: req.requesterPhotoUrl,
+                        });
+                        setAcceptedFriends((prev) =>
+                          prev.some((p) => p.uid === profile.uid) ? prev : [profile, ...prev]
+                        );
+                        onToast(`You and @${req.requesterUsername} are now friends!`);
+                      } catch (err: any) {
+                        onToast(err?.message || 'Could not accept friend request.', 'error');
+                      }
                     }}
                     className="px-3 py-1.5 min-h-[38px] rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-semibold flex items-center gap-1 cursor-pointer"
                   >
@@ -134,6 +269,33 @@ export const NotificationsPage: React.FC<NotificationsPageProps> = ({
                     <X className="w-3.5 h-3.5" />
                   </button>
                 </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Newly accepted friends quick message strip */}
+      {acceptedFriends.length > 0 && onMessageUser && (
+        <section className="p-4 rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] space-y-2.5">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8]">
+            Say hi to your new friend
+          </h2>
+          <div className="flex flex-wrap gap-2">
+            {acceptedFriends.map((friend) => (
+              <div
+                key={friend.uid}
+                className="flex items-center gap-2.5 px-3 py-1.5 rounded-full border border-[#d4cfc5] dark:border-[#404040] bg-[#f5f4f0] dark:bg-[#171717]"
+              >
+                <span className="text-xs font-semibold">@{friend.username}</span>
+                <button
+                  type="button"
+                  onClick={() => onMessageUser(friend)}
+                  className="px-2.5 py-1 rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer"
+                >
+                  <MessageSquare className="w-3 h-3" />
+                  <span>Message</span>
+                </button>
               </div>
             ))}
           </div>
@@ -212,16 +374,23 @@ export const NotificationsPage: React.FC<NotificationsPageProps> = ({
         ) : (
           notifications.map((n) => {
             const Icon = getIcon(n.type);
+            const actionText = getNotificationPhrase(n.type);
+            const snippet = getNotificationSnippet(n);
+            const isFriendAccepted = n.type === 'friend_accept' || n.type === 'friend_accepted';
+
             return (
               <div
                 key={n.id}
-                onClick={() => {
-                  if (!n.read) markNotifRead(n.id);
-                  if ((n.type === 'message' || n.type === 'story_reply') && onNavigate) {
-                    onNavigate('messages');
+                role="button"
+                tabIndex={0}
+                onClick={() => handleOpenNotification(n)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    handleOpenNotification(n);
                   }
                 }}
-                className={`p-4 flex items-start justify-between gap-3 transition-colors cursor-pointer ${
+                className={`p-4 flex items-start justify-between gap-3 transition-colors hover:bg-[#eae7e0]/50 dark:hover:bg-[#303030]/40 cursor-pointer ${
                   !n.read ? 'bg-[#f5f4f0] dark:bg-[#303030]/60' : ''
                 }`}
               >
@@ -246,25 +415,47 @@ export const NotificationsPage: React.FC<NotificationsPageProps> = ({
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
+                          if (!n.read) markNotifRead(n.id);
                           onOpenProfile(n.actorId);
                         }}
                         className="font-semibold hover:underline cursor-pointer mr-1"
                       >
                         @{n.actorUsername}
                       </button>
-                      <span>{n.targetPreview || n.type}</span>
+                      <span>{actionText}</span>
                     </p>
+                    {snippet && (
+                      <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8] line-clamp-2">
+                        &ldquo;{snippet}&rdquo;
+                      </p>
+                    )}
                     <p className="text-[11px] text-[#4e4c46] dark:text-[#c2bfb8]">
                       {formatRelativeTime(n.createdAt)}
                     </p>
                   </div>
                 </div>
-                {!n.read && (
-                  <span
-                    aria-label="Unread"
-                    className="w-2.5 h-2.5 rounded-full bg-[#171717] dark:bg-[#e5e1da] shrink-0 mt-1.5"
-                  />
-                )}
+                <div className="flex items-center gap-2 shrink-0">
+                  {isFriendAccepted && onMessageUser && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (!n.read) markNotifRead(n.id);
+                        onMessageUser(resolveActorProfile(n));
+                      }}
+                      className="px-2.5 py-1.5 min-h-[32px] rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer"
+                    >
+                      <MessageSquare className="w-3 h-3" />
+                      <span>Message</span>
+                    </button>
+                  )}
+                  {!n.read && (
+                    <span
+                      aria-label="Unread"
+                      className="w-2.5 h-2.5 rounded-full bg-[#171717] dark:bg-[#e5e1da] shrink-0"
+                    />
+                  )}
+                </div>
               </div>
             );
           })

@@ -4,7 +4,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useWardrobe } from '../context/WardrobeContext';
 import { useSocial } from '../context/SocialContext';
-import { Menu, Sun, Moon, RotateCcw, WifiOff, MessageCircle, Plus } from 'lucide-react';
+import { Menu, Sun, Moon, RotateCcw, WifiOff, MessageCircle, Plus, Users, Bell } from 'lucide-react';
 import { PWAInstallButton } from './PWAInstallButton';
 
 interface HeaderBarProps {
@@ -39,7 +39,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   const { theme, toggleTheme } = useTheme();
   const { isDemoMode, updateAccountProfile } = useAuth();
   const { resetDemoData, isOnline } = useWardrobe();
-  const { unreadMessagesCount } = useSocial();
+  const { unreadMessagesCount, unreadNotificationsCount, incomingFriendRequests } = useSocial();
 
   const handleToggleTheme = () => {
     const next = theme === 'dark' ? 'light' : 'dark';
@@ -110,23 +110,61 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
         )}
 
         {onNavigate && (
-          <button
-            type="button"
-            onClick={() => onNavigate('messages')}
-            aria-label="Open messages"
-            className={`relative min-w-[40px] min-h-[40px] px-2.5 py-2 rounded-control border text-xs font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
-              activeSection === 'messages'
-                ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-transparent'
-                : 'border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] hover:bg-[#eae7e0] dark:hover:bg-[#303030]'
-            }`}
-          >
-            <MessageCircle className="w-4 h-4" />
-            {unreadMessagesCount > 0 && (
-              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono-num font-bold bg-red-600 text-white leading-none">
-                {unreadMessagesCount > 99 ? '99+' : unreadMessagesCount}
-              </span>
-            )}
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={() => onNavigate('people')}
+              aria-label="Open People and friend requests"
+              className={`lg:hidden relative min-w-[40px] min-h-[40px] px-2.5 py-2 rounded-control border text-xs font-medium flex items-center justify-center gap-1 transition-colors cursor-pointer ${
+                activeSection === 'people'
+                  ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-transparent'
+                  : 'border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] hover:bg-[#eae7e0] dark:hover:bg-[#303030]'
+              }`}
+            >
+              <Users className="w-4 h-4" />
+              {incomingFriendRequests.length > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono-num font-bold bg-red-600 text-white leading-none">
+                  {incomingFriendRequests.length > 99 ? '99+' : incomingFriendRequests.length}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onNavigate('notifications')}
+              aria-label="Open Notifications"
+              className={`lg:hidden relative min-w-[40px] min-h-[40px] px-2.5 py-2 rounded-control border text-xs font-medium flex items-center justify-center gap-1 transition-colors cursor-pointer ${
+                activeSection === 'notifications'
+                  ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-transparent'
+                  : 'border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] hover:bg-[#eae7e0] dark:hover:bg-[#303030]'
+              }`}
+            >
+              <Bell className="w-4 h-4" />
+              {unreadNotificationsCount > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono-num font-bold bg-red-600 text-white leading-none">
+                  {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onNavigate('messages')}
+              aria-label="Open messages"
+              className={`hidden lg:flex relative min-w-[40px] min-h-[40px] px-2.5 py-2 rounded-control border text-xs font-medium items-center justify-center gap-1.5 transition-colors cursor-pointer ${
+                activeSection === 'messages'
+                  ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-transparent'
+                  : 'border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] hover:bg-[#eae7e0] dark:hover:bg-[#303030]'
+              }`}
+            >
+              <MessageCircle className="w-4 h-4" />
+              {unreadMessagesCount > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono-num font-bold bg-red-600 text-white leading-none">
+                  {unreadMessagesCount > 99 ? '99+' : unreadMessagesCount}
+                </span>
+              )}
+            </button>
+          </>
         )}
 
         <PWAInstallButton compact />

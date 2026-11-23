@@ -6,9 +6,10 @@ import { preparePreviewDataUrl, uploadImageAsset } from '../services/storageServ
 import { GarmentImage } from './GarmentImage';
 import { VisibilityBadge } from './VisibilityBadge';
 import { PhotoCropState, PhotoEditorModal, createDefaultCropState } from './PhotoEditorModal';
+import { PhotoPickerButton } from './PhotoPickerButton';
 import { DiscardDraftDialog } from './DiscardDraftDialog';
 import { ErrorBoundary } from './ErrorBoundary';
-import { AlertCircle, Plus, CheckCircle2, Trash2, ArrowRightCircle, Upload, X, Crop } from 'lucide-react';
+import { AlertCircle, Plus, CheckCircle2, Trash2, ArrowRightCircle, X, Crop } from 'lucide-react';
 
 interface WishlistPageProps {
   onToast: (msg: string, type?: 'success' | 'error') => void;
@@ -66,22 +67,12 @@ export const WishlistPage: React.FC<WishlistPageProps> = ({ onToast }) => {
     resetModal();
   };
 
-  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
+  const handleFile = async (file: File) => {
     setModalError(null);
-    try {
-      const compressedDataUrl = await preparePreviewDataUrl(file);
-      setRawPhotoUrl(compressedDataUrl);
-      setCropState(createDefaultCropState('1:1'));
-      setCropModalOpen(true);
-    } catch (err: any) {
-      const msg = err?.message || 'Could not process image file.';
-      console.error('Wishlist photo load failed:', err);
-      setModalError(msg);
-      onToast(msg, 'error');
-    }
+    const compressedDataUrl = await preparePreviewDataUrl(file);
+    setRawPhotoUrl(compressedDataUrl);
+    setCropState(createDefaultCropState('1:1'));
+    setCropModalOpen(true);
   };
 
   const handleAdd = async (e: React.FormEvent) => {
@@ -344,11 +335,16 @@ export const WishlistPage: React.FC<WishlistPageProps> = ({ onToast }) => {
                     </button>
                   </div>
                 ) : (
-                  <label className="flex items-center justify-center gap-2 p-3.5 rounded-control border border-dashed border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#171717] text-xs cursor-pointer">
-                    <Upload className="w-4 h-4" />
-                    <span>Upload reference photo (optional)</span>
-                    <input type="file" accept="image/*" onChange={handleFile} className="sr-only" />
-                  </label>
+                  <PhotoPickerButton
+                    label="Choose reference photo (optional)"
+                    busyLabel="Preparing photo..."
+                    className="w-full flex items-center justify-center gap-2 p-3.5 rounded-control border border-dashed border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#171717] text-xs font-semibold cursor-pointer"
+                    onFileSelected={handleFile}
+                    onError={(msg) => {
+                      setModalError(msg);
+                      onToast(msg, 'error');
+                    }}
+                  />
                 )}
 
                 <input

@@ -335,19 +335,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <button
           type="button"
-          onClick={() => onSelectSection('people')}
-          aria-label="People"
+          onClick={() => onSelectSection('profile')}
+          aria-label="Profile"
           className={`relative min-w-[44px] min-h-[44px] px-2.5 rounded-control flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium cursor-pointer transition-colors ${
-            activeSection === 'people'
+            activeSection === 'profile'
               ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717]'
               : 'text-[#4e4c46] dark:text-[#c2bfb8]'
           }`}
         >
-          <Users className="w-4 h-4" />
-          <span>People</span>
-          {incomingFriendRequests.length > 0 && (
-            <span className="absolute top-1.5 right-2 w-2 h-2 rounded-full bg-red-500" />
-          )}
+          <User className="w-4 h-4" />
+          <span>Profile</span>
         </button>
       </nav>
     </>

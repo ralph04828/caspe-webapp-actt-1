@@ -26,7 +26,9 @@ import { CreateMyDayModal } from './components/CreateMyDayModal';
 import { MyDayViewerModal } from './components/MyDayViewerModal';
 import { MyDayUserGroup } from './components/MyDayBar';
 import { SharedLookbookView } from './components/SharedLookbookView';
+import { PostDetailModal } from './components/PostDetailModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { getPostByIdFirestore } from './services/firestoreService';
 import {
   ActiveModalType,
   getDraftSessionKey,
@@ -34,8 +36,10 @@ import {
   loadSessionNavState,
   saveSessionNavState,
 } from './utils/draftStorage';
+import { loadIdbDraft } from './utils/indexedDbDrafts';
+import { applyPwaUpdate, dismissPwaUpdate, subscribePwaUpdate } from './utils/pwaUpdate';
 import { ClothingItem, NavSection, Outfit, SocialPost, UserProfile } from './types';
-import { CheckCircle2, AlertCircle } from 'lucide-react';
+import { CheckCircle2, AlertCircle, RefreshCw, X } from 'lucide-react';
 
 const VALID_NAV_SECTIONS: NavSection[] = [
   'home',
@@ -54,8 +58,14 @@ const VALID_NAV_SECTIONS: NavSection[] = [
 ];
 
 const MainShell: React.FC = () => {
-  const { userProfile, loading, needsOnboarding, inviteUsername } = useAuth();
-  const { storiesForFeed, startDmWithFriend } = useSocial();
+  const { userProfile, loading, needsOnboarding, inviteUsername, isDemoMode } = useAuth();
+  const {
+    storiesForFeed,
+    startDmWithFriend,
+    visiblePostsForFeed,
+    visibleFriendsPosts,
+    myPosts,
+  } = useSocial();
 
   const [shareToken, setShareToken] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null;
@@ -83,7 +93,15 @@ const MainShell: React.FC = () => {
     initialUserId: string;
   } | null>(null);
 
+  const [openPostModalState, setOpenPostModalState] = useState<{
+    post: SocialPost;
+    openComments?: boolean;
+    commentId?: string;
+  } | null>(null);
+  const [pwaUpdateReady, setPwaUpdateReady] = useState(false);
+
   const hydratedUidRef = useRef<string | null>(null);
+  const handledInitialPostPathRef = useRef(false);
 
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
@@ -94,7 +112,67 @@ const MainShell: React.FC = () => {
     }, 4200);
   };
 
-  // Restore last active section / open modal / unsaved draft after mobile camera or tab reload
+  useEffect(() => {
+    return subscribePwaUpdate((ready) => {
+      setPwaUpdateReady(ready);
+    });
+  }, []);
+
+  const openPostById = async (
+    postId: string,
+    options?: { openComments?: boolean; commentId?: string }
+  ) => {
+    const cleanId = postId.trim();
+    if (!cleanId) return;
+    const localMatch = [...myPosts, ...visibleFriendsPosts, ...visiblePostsForFeed].find(
+      (p) => p.id === cleanId
+    );
+    if (localMatch) {
+      setOpenPostModalState({
+        post: localMatch,
+        openComments: options?.openComments ?? true,
+        commentId: options?.commentId,
+      });
+      return;
+    }
+    if (isDemoMode) {
+      showToast('This post is no longer available', 'error');
+      return;
+    }
+    try {
+      const fetched = await getPostByIdFirestore(cleanId);
+      if (fetched) {
+        setOpenPostModalState({
+          post: fetched,
+          openComments: options?.openComments ?? true,
+          commentId: options?.commentId,
+        });
+      } else {
+        showToast('This post is no longer available', 'error');
+      }
+    } catch (err) {
+      console.error('Failed loading post detail:', err);
+      showToast('This post is no longer available', 'error');
+    }
+  };
+
+  useEffect(() => {
+    if (!userProfile || needsOnboarding) return;
+    const checkPath = () => {
+      const match = window.location.pathname.match(/^\/post\/([a-zA-Z0-9_-]+)/);
+      if (match?.[1]) {
+        openPostById(match[1], { openComments: true });
+      }
+    };
+    if (!handledInitialPostPathRef.current) {
+      handledInitialPostPathRef.current = true;
+      checkPath();
+    }
+    window.addEventListener('popstate', checkPath);
+    return () => window.removeEventListener('popstate', checkPath);
+  }, [userProfile?.uid, needsOnboarding, myPosts.length, visibleFriendsPosts.length, visiblePostsForFeed.length]);
+
+  // Restore last active section / open modal / unsaved draft after mobile picker or tab reload
   useEffect(() => {
     const uid = userProfile?.uid;
     if (!uid) {
@@ -155,6 +233,26 @@ const MainShell: React.FC = () => {
       setCreateMyDayOpen(true);
     } else if (modalToRestore === 'create_post') {
       setCreatePostOpen(true);
+    } else if (!savedNav) {
+      // Fallback: check IndexedDB drafts if sessionStorage was cleared
+      Promise.all([
+        loadIdbDraft<any>(getDraftSessionKey('wardrobe', uid)),
+        loadIdbDraft<any>(getDraftSessionKey('myday', uid)),
+        loadIdbDraft<any>(getDraftSessionKey('create_post', uid)),
+        loadIdbDraft<any>(getDraftSessionKey('ootd', uid)),
+      ]).then(([idbW, idbM, idbP, idbO]) => {
+        if (idbW && !idbW.editingItemId && (idbW.rawPhotoUrl || idbW.croppedPhotoUrl || idbW.name?.trim())) {
+          setActiveSection('wardrobe');
+          setOpenAddClothing(true);
+          setWardrobeModalOpen(true);
+        } else if (idbM && (idbM.rawPhotoUrl || idbM.croppedPhotoUrl || idbM.caption?.trim())) {
+          setCreateMyDayOpen(true);
+        } else if (idbP && ((Array.isArray(idbP.photos) && idbP.photos.length > 0) || idbP.caption?.trim())) {
+          setCreatePostOpen(true);
+        } else if (idbO && ((Array.isArray(idbO.photos) && idbO.photos.length > 0) || idbO.caption?.trim())) {
+          setActiveSection('ootd');
+        }
+      });
     }
 
     hydratedUidRef.current = uid;
@@ -465,6 +563,12 @@ const MainShell: React.FC = () => {
             {activeSection === 'notifications' && (
               <NotificationsPage
                 onOpenProfile={handleOpenProfile}
+                onOpenPost={(postId, options) => openPostById(postId, options)}
+                onOpenConversation={(convId) => {
+                  if (convId) setInitialConversationId(convId);
+                  navigateToSection('messages');
+                }}
+                onMessageUser={handleMessageUser}
                 onNavigate={navigateToSection}
                 onToast={showToast}
               />
@@ -527,6 +631,55 @@ const MainShell: React.FC = () => {
             navigateToSection('messages');
           }}
         />
+      )}
+
+      {openPostModalState && (
+        <PostDetailModal
+          post={openPostModalState.post}
+          openComments={openPostModalState.openComments}
+          highlightCommentId={openPostModalState.commentId}
+          onClose={() => {
+            setOpenPostModalState(null);
+            if (window.location.pathname.startsWith('/post/')) {
+              window.history.replaceState({}, '', '/');
+            }
+          }}
+          onOpenProfile={(uid) => {
+            setOpenPostModalState(null);
+            handleOpenProfile(uid);
+          }}
+          onRemixPost={(p) => {
+            setOpenPostModalState(null);
+            handleRemixPost(p);
+          }}
+          onToast={showToast}
+        />
+      )}
+
+      {pwaUpdateReady && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-20 lg:bottom-5 left-1/2 -translate-x-1/2 lg:left-auto lg:translate-x-0 lg:right-5 z-[88] px-4 py-2.5 rounded-control bg-[#171717] text-[#e5e1da] dark:bg-[#e5e1da] dark:text-[#171717] border border-[#404040] text-xs font-medium flex items-center gap-3 shadow-xl"
+        >
+          <span>New version available.</span>
+          <button
+            type="button"
+            onClick={() => applyPwaUpdate()}
+            className="px-2.5 py-1 rounded-chip bg-[#f5f4f0] text-[#171717] dark:bg-[#171717] dark:text-[#e5e1da] font-bold inline-flex items-center gap-1 cursor-pointer hover:opacity-90"
+          >
+            <RefreshCw className="w-3 h-3" />
+            <span>Refresh</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => dismissPwaUpdate()}
+            aria-label="Dismiss update notice"
+            className="p-1 rounded-chip hover:opacity-75 cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
       )}
 
       {toast && (

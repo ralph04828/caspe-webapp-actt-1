@@ -5,20 +5,24 @@ import {
   Check,
   Loader2,
   RotateCcw,
+  RotateCw,
   Upload,
   X,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
 import { WEBP_QUALITY } from '../services/storageService';
+import { PhotoPickerButton } from './PhotoPickerButton';
 
 export type CropAspectKey = '1:1' | '4:5' | '3:4' | '16:9';
+export type CropRotationDeg = 0 | 90 | 180 | 270;
 
 export interface PhotoCropState {
   zoom: number;
   offsetXNorm: number;
   offsetYNorm: number;
   aspectKey: CropAspectKey;
+  rotationDeg?: CropRotationDeg;
 }
 
 export interface PhotoCropResult {
@@ -45,6 +49,7 @@ export function createDefaultCropState(aspectKey: CropAspectKey = '1:1'): PhotoC
     offsetXNorm: 0,
     offsetYNorm: 0,
     aspectKey,
+    rotationDeg: 0,
   };
 }
 
@@ -72,7 +77,7 @@ export const PhotoCropEditor: React.FC<PhotoCropEditorProps> = ({
   circleMask = false,
   outputMaxDim = 1000,
   title = 'Adjust & Crop Photo',
-  subtitle = 'Drag to reposition and zoom to frame your shot.',
+  subtitle = 'Drag to reposition, rotate, and zoom to frame your shot.',
   backLabel = 'Back',
   doneLabel = 'Done',
   onBack,
@@ -81,6 +86,7 @@ export const PhotoCropEditor: React.FC<PhotoCropEditorProps> = ({
 }) => {
   const initialAspect = initialCrop?.aspectKey || defaultAspect;
   const [aspectKey, setAspectKey] = useState<CropAspectKey>(initialAspect);
+  const [rotationDeg, setRotationDeg] = useState<CropRotationDeg>(initialCrop?.rotationDeg ?? 0);
   const [zoom, setZoom] = useState<number>(initialCrop?.zoom || 1);
   const [offset, setOffset] = useState<{ x: number; y: number }>(() => {
     const cfg = ASPECT_CONFIG[initialAspect];
@@ -102,8 +108,20 @@ export const PhotoCropEditor: React.FC<PhotoCropEditorProps> = ({
   const viewW = cfg.viewW;
   const viewH = cfg.viewH;
 
-  const getBaseScale = (img: HTMLImageElement, targetW: number, targetH: number) =>
-    Math.max(targetW / img.naturalWidth, targetH / img.naturalHeight);
+  const getOrientedNaturalSize = (img: HTMLImageElement, rot: CropRotationDeg) =>
+    rot % 180 !== 0
+      ? { w: img.naturalHeight, h: img.naturalWidth }
+      : { w: img.naturalWidth, h: img.naturalHeight };
+
+  const getBaseScale = (
+    img: HTMLImageElement,
+    targetW: number,
+    targetH: number,
+    rot: CropRotationDeg = rotationDeg
+  ) => {
+    const { w, h } = getOrientedNaturalSize(img, rot);
+    return Math.max(targetW / w, targetH / h);
+  };
 
   const clampOffsetWith = (
     nextX: number,
@@ -111,12 +129,14 @@ export const PhotoCropEditor: React.FC<PhotoCropEditorProps> = ({
     currentZoom: number,
     img: HTMLImageElement | null,
     targetW = viewW,
-    targetH = viewH
+    targetH = viewH,
+    rot: CropRotationDeg = rotationDeg
   ) => {
     if (!img) return { x: 0, y: 0 };
-    const scale = getBaseScale(img, targetW, targetH) * currentZoom;
-    const drawW = img.naturalWidth * scale;
-    const drawH = img.naturalHeight * scale;
+    const { w, h } = getOrientedNaturalSize(img, rot);
+    const scale = getBaseScale(img, targetW, targetH, rot) * currentZoom;
+    const drawW = w * scale;
+    const drawH = h * scale;
     const maxX = Math.max(0, (drawW - targetW) / 2);
     const maxY = Math.max(0, (drawH - targetH) / 2);
     return {
@@ -150,13 +170,25 @@ export const PhotoCropEditor: React.FC<PhotoCropEditorProps> = ({
 
       if (sourceChanged && !initialCrop) {
         setZoom(1);
+        setRotationDeg(0);
         setOffset({ x: 0, y: 0 });
       } else {
         const restoredZoom = initialCrop?.zoom || zoom || 1;
+        const restoredRot = initialCrop?.rotationDeg ?? rotationDeg;
         const restoredCfg = ASPECT_CONFIG[initialCrop?.aspectKey || aspectKey];
         const rawX = initialCrop ? initialCrop.offsetXNorm * restoredCfg.viewW : offset.x;
         const rawY = initialCrop ? initialCrop.offsetYNorm * restoredCfg.viewH : offset.y;
-        setOffset(clampOffsetWith(rawX, rawY, restoredZoom, img, restoredCfg.viewW, restoredCfg.viewH));
+        setOffset(
+          clampOffsetWith(
+            rawX,
+            rawY,
+            restoredZoom,
+            img,
+            restoredCfg.viewW,
+            restoredCfg.viewH,
+            restoredRot
+          )
+        );
       }
     };
 
@@ -173,7 +205,7 @@ export const PhotoCropEditor: React.FC<PhotoCropEditorProps> = ({
     };
   }, [sourceUrl]);
 
-  const baseScale = imgEl ? getBaseScale(imgEl, viewW, viewH) : 1;
+  const baseScale = imgEl ? getBaseScale(imgEl, viewW, viewH, rotationDeg) : 1;
   const effectiveScale = baseScale * zoom;
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -202,8 +234,15 @@ export const PhotoCropEditor: React.FC<PhotoCropEditorProps> = ({
     dragStartRef.current = null;
   };
 
+  const handleRotate90 = () => {
+    const nextRot = ((rotationDeg + 90) % 360) as CropRotationDeg;
+    setRotationDeg(nextRot);
+    setOffset((prev) => clampOffsetWith(prev.x, prev.y, zoom, imgEl, viewW, viewH, nextRot));
+  };
+
   const handleResetCrop = () => {
     setZoom(1);
+    setRotationDeg(0);
     setOffset({ x: 0, y: 0 });
     setError(null);
   };
@@ -211,7 +250,9 @@ export const PhotoCropEditor: React.FC<PhotoCropEditorProps> = ({
   const handleAspectSwitch = (nextAspect: CropAspectKey) => {
     const nextCfg = ASPECT_CONFIG[nextAspect];
     setAspectKey(nextAspect);
-    setOffset((prev) => clampOffsetWith(prev.x, prev.y, zoom, imgEl, nextCfg.viewW, nextCfg.viewH));
+    setOffset((prev) =>
+      clampOffsetWith(prev.x, prev.y, zoom, imgEl, nextCfg.viewW, nextCfg.viewH, rotationDeg)
+    );
   };
 
   const handleDoneClick = async () => {
@@ -246,10 +287,12 @@ export const PhotoCropEditor: React.FC<PhotoCropEditorProps> = ({
       const scaleRatioY = outH / viewH;
       const drawW = imgEl.naturalWidth * effectiveScale * scaleRatioX;
       const drawH = imgEl.naturalHeight * effectiveScale * scaleRatioY;
-      const drawX = (outW - drawW) / 2 + offset.x * scaleRatioX;
-      const drawY = (outH - drawH) / 2 + offset.y * scaleRatioY;
 
-      ctx.drawImage(imgEl, drawX, drawY, drawW, drawH);
+      ctx.save();
+      ctx.translate(outW / 2 + offset.x * scaleRatioX, outH / 2 + offset.y * scaleRatioY);
+      ctx.rotate((rotationDeg * Math.PI) / 180);
+      ctx.drawImage(imgEl, -drawW / 2, -drawH / 2, drawW, drawH);
+      ctx.restore();
 
       let dataUrl = canvas.toDataURL('image/webp', WEBP_QUALITY);
       if (!dataUrl.startsWith('data:image/webp')) {
@@ -264,10 +307,12 @@ export const PhotoCropEditor: React.FC<PhotoCropEditorProps> = ({
         offsetXNorm: viewW > 0 ? offset.x / viewW : 0,
         offsetYNorm: viewH > 0 ? offset.y / viewH : 0,
         aspectKey,
+        rotationDeg,
       };
 
       console.log('[SWOOOSH] Cropped image dimensions:', {
         aspectRatio: aspectKey,
+        rotationDeg,
         width: outW,
         height: outH,
       });
@@ -298,20 +343,14 @@ export const PhotoCropEditor: React.FC<PhotoCropEditorProps> = ({
         </div>
 
         {onChangePhotoFile && (
-          <label className="px-3 py-1.5 min-h-[36px] rounded-control border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#171717] text-xs font-semibold inline-flex items-center gap-1.5 hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer">
-            <Upload className="w-3.5 h-3.5" />
-            <span>Change photo</span>
-            <input
-              type="file"
-              accept="image/*"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                e.target.value = '';
-                if (file) onChangePhotoFile(file);
-              }}
-              className="sr-only"
-            />
-          </label>
+          <PhotoPickerButton
+            label="Change photo"
+            busyLabel="Loading..."
+            icon={<Upload className="w-3.5 h-3.5" />}
+            className="px-3 py-1.5 min-h-[36px] rounded-control border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#171717] text-xs font-semibold inline-flex items-center gap-1.5 hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer"
+            onFileSelected={onChangePhotoFile}
+            onError={(msg) => setError(msg)}
+          />
         )}
       </div>
 
@@ -360,11 +399,15 @@ export const PhotoCropEditor: React.FC<PhotoCropEditorProps> = ({
               alt="Crop preview"
               draggable={false}
               style={{
+                position: 'absolute',
+                left: '50%',
+                top: '50%',
                 width: imgEl.naturalWidth * effectiveScale,
                 height: imgEl.naturalHeight * effectiveScale,
                 maxWidth: 'none',
                 maxHeight: 'none',
-                transform: `translate(${(viewW - imgEl.naturalWidth * effectiveScale) / 2 + offset.x}px, ${(viewH - imgEl.naturalHeight * effectiveScale) / 2 + offset.y}px)`,
+                transform: `translate(-50%, -50%) translate(${offset.x}px, ${offset.y}px) rotate(${rotationDeg}deg)`,
+                transformOrigin: 'center center',
               }}
               className="pointer-events-none select-none"
             />
@@ -398,7 +441,7 @@ export const PhotoCropEditor: React.FC<PhotoCropEditorProps> = ({
         </div>
       </div>
 
-      {/* Zoom + Reset Controls */}
+      {/* Zoom + Rotate 90° + Reset Controls */}
       <div className="flex items-center gap-2 max-w-xs mx-auto">
         <button
           type="button"
@@ -443,9 +486,20 @@ export const PhotoCropEditor: React.FC<PhotoCropEditorProps> = ({
 
         <button
           type="button"
+          onClick={handleRotate90}
+          disabled={!imgEl}
+          aria-label="Rotate 90 degrees"
+          title="Rotate 90° clockwise"
+          className="w-10 h-10 rounded-control border border-[#d4cfc5] dark:border-[#404040] flex items-center justify-center hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer shrink-0 disabled:opacity-45"
+        >
+          <RotateCw className="w-3.5 h-3.5" />
+        </button>
+
+        <button
+          type="button"
           onClick={handleResetCrop}
           aria-label="Reset crop"
-          title="Reset zoom and position"
+          title="Reset rotation, zoom and position"
           className="w-10 h-10 rounded-control border border-[#d4cfc5] dark:border-[#404040] flex items-center justify-center hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer shrink-0"
         >
           <RotateCcw className="w-3.5 h-3.5" />

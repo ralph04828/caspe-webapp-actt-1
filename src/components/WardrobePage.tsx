@@ -20,9 +20,11 @@ import {
   removeSessionKey,
   saveSessionJson,
 } from '../utils/draftStorage';
+import { loadIdbDraft, removeIdbDraft, saveIdbDraft } from '../utils/indexedDbDrafts';
 import { GarmentImage } from './GarmentImage';
 import { VisibilityBadge } from './VisibilityBadge';
 import { CropAspectKey, PhotoCropEditor, PhotoCropState, createDefaultCropState } from './PhotoEditorModal';
+import { PhotoPickerButton } from './PhotoPickerButton';
 import { DiscardDraftDialog } from './DiscardDraftDialog';
 import { ErrorBoundary } from './ErrorBoundary';
 import {
@@ -34,12 +36,10 @@ import {
   AlertCircle,
   Edit3,
   Trash2,
-  Upload,
   X,
   CheckSquare,
   Square,
   Share2,
-  Camera,
   ArrowLeft,
   Crop,
   Loader2,
@@ -145,25 +145,62 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
     });
   };
 
-  // Restore any interrupted Add Garment draft if mobile camera/gallery triggered a tab reload
+  // Restore any interrupted Add Garment draft if mobile picker triggered a tab reload
   useEffect(() => {
-    const saved = loadSessionJson<WardrobeDraft>(draftKey);
-    if (saved && !saved.editingItemId && (openAddModalOnMount || saved.rawPhotoUrl || saved.name)) {
+    let cancelled = false;
+    const savedSession = loadSessionJson<WardrobeDraft>(draftKey);
+    if (savedSession && !savedSession.editingItemId && (openAddModalOnMount || savedSession.rawPhotoUrl || savedSession.name)) {
       setEditingItem(null);
-      setDraft({ ...makeEmptyWardrobeDraft(defaultVis), ...saved });
+      setDraft({ ...makeEmptyWardrobeDraft(defaultVis), ...savedSession });
       setModalOpen(true);
       onConsumedOpenAdd?.();
     } else if (openAddModalOnMount) {
       openAdd();
       onConsumedOpenAdd?.();
     }
+
+    loadIdbDraft<WardrobeDraft>(draftKey).then((idb) => {
+      if (cancelled || !idb || idb.editingItemId) return;
+      if (idb.rawPhotoUrl || idb.croppedPhotoUrl || idb.name?.trim()) {
+        setEditingItem(null);
+        setDraft((prev) => {
+          if (prev.rawPhotoUrl || prev.croppedPhotoUrl || prev.name.trim()) return prev;
+          return { ...makeEmptyWardrobeDraft(defaultVis), ...idb };
+        });
+        setModalOpen(true);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [openAddModalOnMount, draftKey]);
 
-  // Persist add-mode draft in sessionStorage while modal is open
+  // Persist add-mode draft in IndexedDB + lightweight sessionStorage while modal is open
   useEffect(() => {
     onModalStateChange?.(modalOpen);
     if (!modalOpen || editingItem) return;
-    saveSessionJson(draftKey, draft);
+    const hasContent = Boolean(
+      draft.rawPhotoUrl ||
+        draft.croppedPhotoUrl ||
+        draft.cutoutPhotoUrl ||
+        draft.name.trim() ||
+        draft.brand.trim() ||
+        draft.color.trim() ||
+        draft.description.trim()
+    );
+    if (!hasContent) {
+      removeSessionKey(draftKey);
+      removeIdbDraft(draftKey);
+      return;
+    }
+    saveIdbDraft(draftKey, draft);
+    saveSessionJson(draftKey, {
+      ...draft,
+      rawPhotoUrl: null,
+      croppedPhotoUrl: null,
+      cutoutPhotoUrl: null,
+    });
   }, [modalOpen, editingItem, draft, draftKey]);
 
   const hasUnsavedChanges = useMemo(() => {
@@ -203,6 +240,7 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
     setModalError(null);
     setEditingItem(null);
     removeSessionKey(draftKey);
+    removeIdbDraft(draftKey);
     setDraft(makeEmptyWardrobeDraft(defaultVis));
   };
 
@@ -273,13 +311,6 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
     } finally {
       setPreparingPhoto(false);
     }
-  };
-
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    await processSelectedFile(file);
   };
 
   const resolveEditableDataUrl = async (src: string | null): Promise<string | null> => {
@@ -798,31 +829,21 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
                           <div className="space-y-1">
                             <p className="font-display font-bold text-base">Choose a garment photo</p>
                             <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8]">
-                              Take a photo or pick one from your device. Next you&rsquo;ll crop &amp; frame it, then add details.
+                              Pick a photo from your device. Next you&rsquo;ll crop &amp; frame it, then add details.
                             </p>
                           </div>
-                          <div className="flex flex-wrap items-center justify-center gap-2.5">
-                            <label className="inline-flex items-center gap-2 px-4 py-2.5 min-h-[44px] rounded-control bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-bold cursor-pointer hover:opacity-90">
-                              <Camera className="w-4 h-4" />
-                              <span>Take Photo</span>
-                              <input
-                                type="file"
-                                accept="image/*"
-                                capture="environment"
-                                onChange={handleFileChange}
-                                className="sr-only"
-                              />
-                            </label>
-                            <label className="inline-flex items-center gap-2 px-4 py-2.5 min-h-[44px] rounded-control border border-[#d4cfc5] dark:border-[#404040] bg-[#f5f4f0] dark:bg-[#242424] text-xs font-semibold cursor-pointer hover:bg-[#eae7e0] dark:hover:bg-[#303030]">
-                              <Upload className="w-4 h-4" />
-                              <span>Upload Photo</span>
-                              <input
-                                type="file"
-                                accept="image/*"
-                                onChange={handleFileChange}
-                                className="sr-only"
-                              />
-                            </label>
+                          <div className="flex justify-center">
+                            <PhotoPickerButton
+                              label="Choose Photo"
+                              busyLabel="Preparing photo..."
+                              busy={preparingPhoto}
+                              className="inline-flex items-center gap-2 px-5 py-2.5 min-h-[44px] rounded-control bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-bold cursor-pointer hover:opacity-90"
+                              onFileSelected={processSelectedFile}
+                              onError={(msg) => {
+                                setModalError(msg);
+                                onToast(msg, 'error');
+                              }}
+                            />
                           </div>
                         </>
                       )}
@@ -973,29 +994,17 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
                           )}
                         </div>
                       ) : (
-                        <div className="flex flex-wrap gap-2">
-                          <label className="flex-1 min-w-[140px] flex items-center justify-center gap-2 p-3.5 min-h-[44px] rounded-control border border-dashed border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#171717] cursor-pointer text-xs font-semibold">
-                            <Camera className="w-4 h-4" />
-                            <span>Take Photo</span>
-                            <input
-                              type="file"
-                              accept="image/*"
-                              capture="environment"
-                              onChange={handleFileChange}
-                              className="sr-only"
-                            />
-                          </label>
-                          <label className="flex-1 min-w-[140px] flex items-center justify-center gap-2 p-3.5 min-h-[44px] rounded-control border border-dashed border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#171717] cursor-pointer text-xs font-semibold">
-                            <Upload className="w-4 h-4" />
-                            <span>Upload Photo</span>
-                            <input
-                              type="file"
-                              accept="image/*"
-                              onChange={handleFileChange}
-                              className="sr-only"
-                            />
-                          </label>
-                        </div>
+                        <PhotoPickerButton
+                          label="Choose Photo"
+                          busyLabel="Preparing photo..."
+                          busy={preparingPhoto}
+                          className="w-full flex items-center justify-center gap-2 p-3.5 min-h-[44px] rounded-control border border-dashed border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#171717] cursor-pointer text-xs font-semibold"
+                          onFileSelected={processSelectedFile}
+                          onError={(msg) => {
+                            setModalError(msg);
+                            onToast(msg, 'error');
+                          }}
+                        />
                       )}
                     </div>
 

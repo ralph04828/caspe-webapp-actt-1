@@ -79,7 +79,7 @@ service cloud.firestore {
         data.username.size() >= 3 &&
         data.username.size() <= 24 &&
         isValidUsernameId(data.usernameLower) &&
-        data.username == data.usernameLower &&
+        data.username.lower() == data.usernameLower &&
         data.isPublic is bool &&
         (!('birthday' in data) || data.birthday == null) &&
         (!('bio' in data) || data.bio == null || (data.bio is string && data.bio.size() <= 300)) &&
@@ -153,9 +153,8 @@ service cloud.firestore {
       allow create: if isSignedIn() &&
         isValidUsernameId(usernameLower) &&
         incoming().uid == request.auth.uid &&
-        incoming().usernameLower == usernameLower &&
-        existsAfter(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.usernameLower == usernameLower;
+        incoming().usernameLower == usernameLower;
+      allow update: if false;
       allow delete: if isSignedIn() && existing().uid == request.auth.uid;
     }
 
@@ -245,7 +244,7 @@ service cloud.firestore {
       return (!('aspectRatio' in data) || data.aspectRatio == null || (data.aspectRatio is string && data.aspectRatio.size() <= 16)) &&
         (!('width' in data) || data.width == null || (data.width is number && data.width > 0 && data.width <= 4096)) &&
         (!('height' in data) || data.height == null || (data.height is number && data.height > 0 && data.height <= 4096)) &&
-        (!('mediaDimensions' in data) || data.mediaDimensions == null || (data.mediaDimensions is list && data.mediaDimensions.size() <= 4));
+        (!('mediaDimensions' in data) || data.mediaDimensions == null || (data.mediaDimensions is list && data.mediaDimensions.size() <= 10));
     }
 
     // Social Feed Posts
@@ -402,9 +401,25 @@ service cloud.firestore {
         (existing().viewerId == request.auth.uid || existing().storyOwnerId == request.auth.uid);
     }
 
+    function isValidDmCreate(convId, data) {
+      return data.type == 'dm' &&
+        data.participantIds.size() == 2 &&
+        data.participantIds[0] is string &&
+        data.participantIds[1] is string &&
+        data.participantIds[0] < data.participantIds[1] &&
+        convId == ('dm_' + data.participantIds[0] + '_' + data.participantIds[1]) &&
+        isFriendOf(data.participantIds[0] == request.auth.uid ? data.participantIds[1] : data.participantIds[0]);
+    }
+
     // Direct Messages & Group Conversations
     match /conversations/{convId} {
-      allow get: if isSignedIn() && isValidId(convId) && request.auth.uid in existing().participantIds;
+      allow get: if isSignedIn() && isValidId(convId) && (
+        (resource == null && (
+          convId.matches('^dm_' + request.auth.uid + '_[a-zA-Z0-9_\\-]+$') ||
+          convId.matches('^dm_[a-zA-Z0-9_\\-]+_' + request.auth.uid + '$')
+        )) ||
+        (resource != null && request.auth.uid in existing().participantIds)
+      );
       allow list: if isSignedIn() && request.auth.uid in existing().participantIds;
       allow create: if isSignedIn() &&
         isValidId(convId) &&
@@ -415,6 +430,7 @@ service cloud.firestore {
         incoming().participantIds.size() >= 2 &&
         incoming().participantIds.size() <= 30 &&
         request.auth.uid in incoming().participantIds &&
+        (incoming().type == 'group' || isValidDmCreate(convId, incoming())) &&
         (!('name' in incoming()) || incoming().name == null || (incoming().name is string && incoming().name.size() <= 80));
       allow update: if isSignedIn() &&
         isValidId(convId) &&

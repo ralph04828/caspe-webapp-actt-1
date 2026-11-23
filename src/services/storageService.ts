@@ -3,7 +3,9 @@ import { assertOnlineForWrite, db, handleFirestoreError, OperationType } from '.
 import { MediaAsset, MediaChunk, Visibility } from '../types';
 import { cleanData } from '../utils/cleanData';
 
-export const MAX_INPUT_FILE_BYTES = 12 * 1024 * 1024; // 12 MB input file cap before browser compression
+export const MAX_INPUT_FILE_BYTES = 16 * 1024 * 1024; // 16 MB input file cap before browser compression
+export const MAX_PREVIEW_DIMENSION = 1600;
+export const PREVIEW_WEBP_QUALITY = 0.86;
 export const MAX_FULL_DIMENSION = 1000;
 export const MAX_THUMB_DIMENSION = 256;
 export const WEBP_QUALITY = 0.8;
@@ -131,12 +133,20 @@ export function revokeTempUrl(url?: string | null): void {
   }
 }
 
+function isHeicLikeFile(file: File): boolean {
+  const t = (file.type || '').toLowerCase();
+  const n = (file.name || '').toLowerCase();
+  return t === 'image/heic' || t === 'image/heif' || n.endsWith('.heic') || n.endsWith('.heif');
+}
+
 export function validateImageFile(file: File): string | null {
-  if (!file.type || !file.type.startsWith('image/')) {
+  const lowerName = (file.name || '').toLowerCase();
+  const hasImageExt = /\.(jpe?g|png|webp|gif|avif|heic|heif|bmp)$/i.test(lowerName);
+  if ((!file.type || !file.type.startsWith('image/')) && !hasImageExt) {
     return 'Only image files (JPG, PNG, WEBP) are supported.';
   }
   if (file.size > MAX_INPUT_FILE_BYTES) {
-    return 'Selected photo is too large (max 12 MB before browser compression).';
+    return 'Selected photo is too large (max 16 MB before browser compression).';
   }
   return null;
 }
@@ -158,6 +168,108 @@ function loadHtmlImage(sourceUrl: string): Promise<HTMLImageElement> {
   });
 }
 
+function fitWithinMaxDim(width: number, height: number, maxDim: number): { w: number; h: number } {
+  let w = width;
+  let h = height;
+  if (w > maxDim || h > maxDim) {
+    if (w >= h) {
+      h = Math.max(1, Math.round((h * maxDim) / w));
+      w = maxDim;
+    } else {
+      w = Math.max(1, Math.round((w * maxDim) / h));
+      h = maxDim;
+    }
+  }
+  return { w, h };
+}
+
+function encodeCanvasVariant(
+  canvas: HTMLCanvasElement,
+  quality: number
+): CompressedVariant {
+  let dataUrl = canvas.toDataURL('image/webp', quality);
+  if (!dataUrl.startsWith('data:image/webp')) {
+    dataUrl = canvas.toDataURL('image/jpeg', Math.min(0.9, quality + 0.04));
+  }
+  return {
+    dataUrl,
+    contentType: parseDataUrlContentType(dataUrl),
+    width: canvas.width,
+    height: canvas.height,
+  };
+}
+
+/**
+ * Decodes a File directly with EXIF orientation honored via createImageBitmap when supported,
+ * or falls back cleanly to HTMLImageElement decoding, stripping EXIF/GPS metadata via canvas.
+ */
+async function compressFileToWebp(
+  file: File,
+  maxDim = MAX_FULL_DIMENSION,
+  quality = WEBP_QUALITY
+): Promise<CompressedVariant> {
+  console.log('[SWOOOSH Photo] Decoding selected file:', {
+    name: file.name,
+    type: file.type || '(unknown)',
+    sizeBytes: file.size,
+    targetMaxDim: maxDim,
+  });
+
+  if (typeof createImageBitmap === 'function') {
+    let bitmap: ImageBitmap | null = null;
+    try {
+      bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+      const { w, h } = fitWithinMaxDim(bitmap.width, bitmap.height, maxDim);
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Could not initialize browser image compressor.');
+      ctx.drawImage(bitmap, 0, 0, w, h);
+      const variant = encodeCanvasVariant(canvas, quality);
+      console.log('[SWOOOSH Photo] Compressed via createImageBitmap:', {
+        width: variant.width,
+        height: variant.height,
+        bytes: utf8ByteLength(variant.dataUrl),
+      });
+      return variant;
+    } catch (bitmapErr) {
+      console.warn('[SWOOOSH Photo] createImageBitmap fallback triggered:', bitmapErr);
+    } finally {
+      try {
+        bitmap?.close();
+      } catch {
+        // ignore close errors
+      }
+    }
+  }
+
+  let objectUrl: string | null = null;
+  try {
+    objectUrl =
+      typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function'
+        ? URL.createObjectURL(file)
+        : null;
+    const src = objectUrl || (await readFileAsDataUrl(file));
+    const variant = await compressSourceToWebp(src, maxDim, quality);
+    console.log('[SWOOOSH Photo] Compressed via HTMLImageElement fallback:', {
+      width: variant.width,
+      height: variant.height,
+      bytes: utf8ByteLength(variant.dataUrl),
+    });
+    return variant;
+  } catch (decodeErr) {
+    if (isHeicLikeFile(file)) {
+      throw new Error('This photo format is not supported. Try another photo.');
+    }
+    throw decodeErr instanceof Error
+      ? decodeErr
+      : new Error('Could not decode this photo. Try another photo.');
+  } finally {
+    if (objectUrl) revokeTempUrl(objectUrl);
+  }
+}
+
 /**
  * Draws an image onto a fresh HTML5 canvas (stripping EXIF & GPS metadata),
  * resizes proportionally so longest edge <= maxDim, and encodes as WebP @ ~0.8.
@@ -175,17 +287,7 @@ export async function compressSourceToWebp(
     throw new Error('Image dimensions could not be determined.');
   }
 
-  let w = naturalW;
-  let h = naturalH;
-  if (w > maxDim || h > maxDim) {
-    if (w >= h) {
-      h = Math.max(1, Math.round((h * maxDim) / w));
-      w = maxDim;
-    } else {
-      w = Math.max(1, Math.round((w * maxDim) / h));
-      h = maxDim;
-    }
-  }
+  const { w, h } = fitWithinMaxDim(naturalW, naturalH, maxDim);
 
   const canvas = document.createElement('canvas');
   canvas.width = w;
@@ -196,18 +298,7 @@ export async function compressSourceToWebp(
   }
 
   ctx.drawImage(img, 0, 0, w, h);
-
-  let dataUrl = canvas.toDataURL('image/webp', quality);
-  if (!dataUrl.startsWith('data:image/webp')) {
-    dataUrl = canvas.toDataURL('image/jpeg', quality);
-  }
-
-  return {
-    dataUrl,
-    contentType: parseDataUrlContentType(dataUrl),
-    width: w,
-    height: h,
-  };
+  return encodeCanvasVariant(canvas, quality);
 }
 
 /**
@@ -232,27 +323,16 @@ export async function readFileAsDataUrl(file: File): Promise<string> {
 }
 
 /**
- * Compresses a File into a preview WebP variant (max 1000px @ 0.8) with exact dimensions.
+ * Compresses a File into a high-clarity preview WebP variant (max 1600px @ 0.86) with EXIF rotation applied.
  */
 export async function preparePreviewAsset(file: File): Promise<CompressedVariant> {
   const err = validateImageFile(file);
   if (err) throw new Error(err);
-
-  const objectUrl =
-    typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function'
-      ? URL.createObjectURL(file)
-      : null;
-
-  try {
-    const src = objectUrl || (await readFileAsDataUrl(file));
-    return await compressSourceToWebp(src, MAX_FULL_DIMENSION, WEBP_QUALITY);
-  } finally {
-    if (objectUrl) revokeTempUrl(objectUrl);
-  }
+  return compressFileToWebp(file, MAX_PREVIEW_DIMENSION, PREVIEW_WEBP_QUALITY);
 }
 
 /**
- * Compresses a File or Data URL into an immediately usable WebP Data URL (max 1000px @ 0.8)
+ * Compresses a File into an immediately usable WebP Data URL (max 1600px @ 0.86)
  * for previewing / background removal without holding raw multi-MB files or blob URLs.
  */
 export async function preparePreviewDataUrl(file: File): Promise<string> {

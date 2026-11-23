@@ -117,7 +117,7 @@
     },
     "SocialPost": {
       "title": "SocialPost",
-      "description": "Fashion social feed post (outfit, piece, or ootd) supporting up to 4 photos, inline edits, comment policy, and remix metadata.",
+      "description": "Fashion social feed post (outfit, piece, or ootd) supporting up to 10 photos, inline edits, comment policy, and remix metadata.",
       "type": "object",
       "properties": {
         "id": { "type": "string" },

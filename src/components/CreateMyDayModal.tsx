@@ -2,13 +2,11 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   ArrowLeft,
-  Camera,
   Crop,
   Globe,
   Loader2,
   Lock,
   Music,
-  Upload,
   Users,
   X,
 } from 'lucide-react';
@@ -23,8 +21,10 @@ import {
   removeSessionKey,
   saveSessionJson,
 } from '../utils/draftStorage';
+import { loadIdbDraft, removeIdbDraft, saveIdbDraft } from '../utils/indexedDbDrafts';
 import { AvatarImage } from './AvatarImage';
 import { PhotoCropEditor, PhotoCropState, createDefaultCropState } from './PhotoEditorModal';
+import { PhotoPickerButton } from './PhotoPickerButton';
 import { DiscardDraftDialog } from './DiscardDraftDialog';
 import { ErrorBoundary } from './ErrorBoundary';
 
@@ -93,7 +93,32 @@ export const CreateMyDayModal: React.FC<CreateMyDayModalProps> = ({
   };
 
   useEffect(() => {
-    saveSessionJson(draftKey, draft);
+    let cancelled = false;
+    loadIdbDraft<MyDayDraft>(draftKey).then((idb) => {
+      if (cancelled || !idb) return;
+      setDraft((prev) => {
+        if (prev.rawPhotoUrl || prev.croppedPhotoUrl || prev.caption.trim()) return prev;
+        return { ...makeEmptyMyDayDraft(), ...idb };
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [draftKey]);
+
+  useEffect(() => {
+    const hasContent = Boolean(draft.rawPhotoUrl || draft.croppedPhotoUrl || draft.caption.trim() || draft.altText.trim());
+    if (!hasContent) {
+      removeSessionKey(draftKey);
+      removeIdbDraft(draftKey);
+      return;
+    }
+    saveIdbDraft(draftKey, draft);
+    saveSessionJson(draftKey, {
+      ...draft,
+      rawPhotoUrl: '',
+      croppedPhotoUrl: '',
+    });
   }, [draftKey, draft]);
 
   const hasUnsavedDraft = useMemo(
@@ -119,6 +144,7 @@ export const CreateMyDayModal: React.FC<CreateMyDayModalProps> = ({
   const forceClose = () => {
     setDiscardOpen(false);
     removeSessionKey(draftKey);
+    removeIdbDraft(draftKey);
     onClose();
   };
 
@@ -152,13 +178,6 @@ export const CreateMyDayModal: React.FC<CreateMyDayModalProps> = ({
     } finally {
       setCompressing(false);
     }
-  };
-
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    await processSelectedFile(file);
   };
 
   const toggleCloseFriend = (uid: string) => {
@@ -216,6 +235,7 @@ export const CreateMyDayModal: React.FC<CreateMyDayModalProps> = ({
       });
 
       removeSessionKey(draftKey);
+      removeIdbDraft(draftKey);
       onCreated?.();
       onClose();
     } catch (err: any) {
@@ -289,33 +309,23 @@ export const CreateMyDayModal: React.FC<CreateMyDayModalProps> = ({
                   ) : (
                     <>
                       <p className="text-xs font-semibold text-[#171717] dark:text-[#e5e1da]">
-                        Snap your fit or choose from your gallery
+                        Choose a photo for your 24h MyDay
                       </p>
                       <p className="text-[11px] text-[#4e4c46] dark:text-[#b0b0b0]">
                         You&rsquo;ll crop &amp; adjust the frame next before sharing.
                       </p>
-                      <div className="flex flex-wrap items-center justify-center gap-2.5 pt-1">
-                        <label className="inline-flex items-center gap-2 px-4 py-2.5 min-h-[44px] rounded-control bg-[#171717] dark:bg-[#e5e1da] text-[#f5f4f0] dark:text-[#171717] text-xs font-bold cursor-pointer hover:opacity-90">
-                          <Camera className="w-4 h-4" />
-                          <span>Take Photo</span>
-                          <input
-                            type="file"
-                            accept="image/*"
-                            capture="environment"
-                            onChange={handleFileChange}
-                            className="hidden"
-                          />
-                        </label>
-                        <label className="inline-flex items-center gap-2 px-4 py-2.5 min-h-[44px] rounded-control border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#303030] text-[#171717] dark:text-[#e5e1da] text-xs font-semibold cursor-pointer hover:opacity-90">
-                          <Upload className="w-4 h-4" />
-                          <span>Choose Photo</span>
-                          <input
-                            type="file"
-                            accept="image/*"
-                            onChange={handleFileChange}
-                            className="hidden"
-                          />
-                        </label>
+                      <div className="flex justify-center pt-1">
+                        <PhotoPickerButton
+                          label="Choose Photo"
+                          busyLabel="Preparing WebP photo..."
+                          busy={compressing}
+                          className="inline-flex items-center gap-2 px-5 py-2.5 min-h-[44px] rounded-control bg-[#171717] dark:bg-[#e5e1da] text-[#f5f4f0] dark:text-[#171717] text-xs font-bold cursor-pointer hover:opacity-90"
+                          onFileSelected={processSelectedFile}
+                          onError={(msg) => {
+                            setError(msg);
+                            onToast?.(msg, 'error');
+                          }}
+                        />
                       </div>
                     </>
                   )}

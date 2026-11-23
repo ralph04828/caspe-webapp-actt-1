@@ -7,6 +7,7 @@ import { formatRelativeTime } from '../utils/formatters';
 import { resolveDisplayAspectRatio } from '../utils/aspectRatio';
 import { AvatarImage } from './AvatarImage';
 import { GarmentImage } from './GarmentImage';
+import { PhotoPickerButton } from './PhotoPickerButton';
 import { VisibilityBadge } from './VisibilityBadge';
 import {
   Heart,
@@ -33,6 +34,8 @@ import {
 
 interface PostCardProps {
   post: SocialPost;
+  defaultCommentsOpen?: boolean;
+  highlightCommentId?: string | null;
   onOpenProfile: (userId: string) => void;
   onSelectHashtag?: (tag: string) => void;
   onRemixPost?: (post: SocialPost) => void;
@@ -41,6 +44,8 @@ interface PostCardProps {
 
 export const PostCard: React.FC<PostCardProps> = ({
   post,
+  defaultCommentsOpen = false,
+  highlightCommentId = null,
   onOpenProfile,
   onSelectHashtag,
   onRemixPost,
@@ -80,13 +85,38 @@ export const PostCard: React.FC<PostCardProps> = ({
     setNaturalDims(null);
   }, [post.id]);
 
-  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [commentsOpen, setCommentsOpen] = useState(defaultCommentsOpen);
   const [comments, setComments] = useState<PostComment[]>([]);
   const [loadingComments, setLoadingComments] = useState(false);
   const [commentInput, setCommentInput] = useState('');
   const [replyingTo, setReplyingTo] = useState<{ id: string; username: string } | null>(null);
   const [commentImgDataUrl, setCommentImgDataUrl] = useState<string | null>(null);
   const [submittingComment, setSubmittingComment] = useState(false);
+
+  useEffect(() => {
+    if (!defaultCommentsOpen) return;
+    let active = true;
+    setCommentsOpen(true);
+    setLoadingComments(true);
+    loadComments(post.id)
+      .then((list) => {
+        if (!active) return;
+        setComments(list);
+        if (highlightCommentId) {
+          requestAnimationFrame(() => {
+            document
+              .getElementById(`comment-${highlightCommentId}`)
+              ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          });
+        }
+      })
+      .finally(() => {
+        if (active) setLoadingComments(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [post.id, defaultCommentsOpen, highlightCommentId]);
 
   const isOwner = userProfile?.uid === post.userId;
   const isLiked = likedPostIds.has(post.id);
@@ -134,16 +164,13 @@ export const PostCard: React.FC<PostCardProps> = ({
     }
   };
 
-  const handleCommentFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleCommentFileSelected = async (file: File) => {
     try {
       const compressed = await preparePreviewDataUrl(file);
       setCommentImgDataUrl(compressed);
     } catch (err: any) {
       onToast(err?.message || 'Could not process comment image.', 'error');
     }
-    e.target.value = '';
   };
 
   const handleAddComment = async (e: React.FormEvent) => {
@@ -284,9 +311,21 @@ export const PostCard: React.FC<PostCardProps> = ({
               <button
                 type="button"
                 onClick={() => {
+                  navigator.clipboard?.writeText(`${window.location.origin}/post/${post.id}`);
+                  setMenuOpen(false);
+                  onToast('Post link copied.');
+                }}
+                className="w-full px-3.5 py-2 text-left hover:bg-[#eae7e0] dark:hover:bg-[#303030] flex items-center gap-2 cursor-pointer"
+              >
+                <Copy className="w-3.5 h-3.5" />
+                <span>Copy post link</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
                   navigator.clipboard?.writeText(`${window.location.origin}/?u=${post.authorUsername}`);
                   setMenuOpen(false);
-                  onToast('Link copied.');
+                  onToast('Invite link copied.');
                 }}
                 className="w-full px-3.5 py-2 text-left hover:bg-[#eae7e0] dark:hover:bg-[#303030] flex items-center gap-2 cursor-pointer"
               >
@@ -680,8 +719,15 @@ export const PostCard: React.FC<PostCardProps> = ({
             <div className="space-y-2.5 max-h-72 overflow-y-auto">
               {comments.map((c) => {
                 const canDelete = userProfile?.uid === c.userId || isOwner;
+                const highlighted = Boolean(highlightCommentId && c.id === highlightCommentId);
                 return (
-                  <div key={c.id} className="flex items-start justify-between gap-2 text-xs">
+                  <div
+                    key={c.id}
+                    id={`comment-${c.id}`}
+                    className={`flex items-start justify-between gap-2 text-xs rounded-control ${
+                      highlighted ? 'p-1.5 bg-[#eae7e0] dark:bg-[#303030]' : ''
+                    }`}
+                  >
                     <div className="flex items-start gap-2 min-w-0">
                       <AvatarImage
                         src={c.authorPhotoUrl}
@@ -773,18 +819,15 @@ export const PostCard: React.FC<PostCardProps> = ({
                 </div>
               )}
               <div className="flex gap-2">
-                <label
+                <PhotoPickerButton
+                  label=""
                   title="Attach photo to comment"
+                  ariaLabel="Attach photo to comment"
+                  icon={<ImagePlus className="w-4 h-4" />}
                   className="px-2.5 py-2 min-h-[42px] rounded-control border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] hover:bg-[#eae7e0] dark:hover:bg-[#303030] flex items-center justify-center cursor-pointer shrink-0"
-                >
-                  <ImagePlus className="w-4 h-4" />
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handleCommentFileChange}
-                    className="sr-only"
-                  />
-                </label>
+                  onFileSelected={handleCommentFileSelected}
+                  onError={(msg) => onToast(msg, 'error')}
+                />
                 <input
                   type="text"
                   value={commentInput}

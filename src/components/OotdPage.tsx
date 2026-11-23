@@ -22,19 +22,19 @@ import {
   removeSessionKey,
   saveSessionJson,
 } from '../utils/draftStorage';
+import { loadIdbDraft, removeIdbDraft, saveIdbDraft } from '../utils/indexedDbDrafts';
 import { GarmentImage } from './GarmentImage';
 import { PostCard } from './PostCard';
 import { PhotoCropState, PhotoEditorModal, createDefaultCropState } from './PhotoEditorModal';
+import { PhotoPickerButton } from './PhotoPickerButton';
 import { ErrorBoundary } from './ErrorBoundary';
 import {
   AlertCircle,
-  Camera,
   Crop,
   Globe,
   Loader2,
   Lock,
   Sparkles,
-  Upload,
   Users,
   X,
 } from 'lucide-react';
@@ -102,12 +102,32 @@ export const OotdPage: React.FC<OotdPageProps> = ({
   } | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+    loadIdbDraft<OotdDraft>(draftKey).then((idb) => {
+      if (cancelled || !idb) return;
+      if (Array.isArray(idb.photos) && idb.photos.length > 0 && photos.length === 0) {
+        setPhotos(idb.photos.slice(0, 10));
+        if (!caption && idb.caption) setCaption(idb.caption);
+        if (!selectedOutfitId && idb.selectedOutfitId) setSelectedOutfitId(idb.selectedOutfitId);
+        if (idb.styleTags?.length) setStyleTags(idb.styleTags);
+        if (idb.seasons?.length) setSeasons(idb.seasons);
+        if (idb.visibility) setVisibility(idb.visibility);
+        if (idb.commentPolicy) setCommentPolicy(idb.commentPolicy);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [draftKey]);
+
+  useEffect(() => {
     const hasDraft = Boolean(photos.length > 0 || caption.trim() || selectedOutfitId);
     if (!hasDraft) {
       removeSessionKey(draftKey);
+      removeIdbDraft(draftKey);
       return;
     }
-    saveSessionJson<OotdDraft>(draftKey, {
+    const fullDraft: OotdDraft = {
       photos,
       caption,
       selectedOutfitId,
@@ -115,6 +135,11 @@ export const OotdPage: React.FC<OotdPageProps> = ({
       seasons,
       visibility,
       commentPolicy,
+    };
+    saveIdbDraft(draftKey, fullDraft);
+    saveSessionJson<OotdDraft>(draftKey, {
+      ...fullDraft,
+      photos: photos.length <= 2 ? photos : [],
     });
   }, [draftKey, photos, caption, selectedOutfitId, styleTags, seasons, visibility, commentPolicy]);
 
@@ -128,46 +153,38 @@ export const OotdPage: React.FC<OotdPageProps> = ({
     );
   }, [visibleFriendsPosts, visiblePostsForFeed]);
 
-  const handlePhotoFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []).slice(0, Math.max(0, 4 - photos.length));
-    e.target.value = '';
+  const handlePhotoFilesSelected = async (selectedFiles: File[]) => {
+    const files = selectedFiles.slice(0, Math.max(0, 10 - photos.length));
     if (files.length === 0) return;
     setFormError(null);
 
-    try {
-      const defaultSharedAspect = photos[0]?.cropState?.aspectKey || '4:5';
-      if (files.length === 1) {
-        const compressed = await preparePreviewAsset(files[0]);
-        setEditorState({
-          mode: 'new',
-          sourceUrl: compressed.dataUrl,
-          initialCrop: createDefaultCropState(defaultSharedAspect),
-        });
-        return;
-      }
-
-      const added: OotdStagedPhoto[] = [];
-      for (const file of files) {
-        const compressed = await preparePreviewAsset(file);
-        added.push({
-          rawDataUrl: compressed.dataUrl,
-          croppedDataUrl: compressed.dataUrl,
-          cropState: null,
-          aspectRatio: formatAspectRatioFromDimensions(compressed.width, compressed.height, {
-            clampToFeed: true,
-          }),
-          width: compressed.width,
-          height: compressed.height,
-          alt: '',
-        });
-      }
-      setPhotos((prev) => [...prev, ...added].slice(0, 4));
-    } catch (err: any) {
-      const msg = err?.message || 'Could not process image.';
-      console.error('OOTD image load error:', err);
-      setFormError(msg);
-      onToast(msg, 'error');
+    const defaultSharedAspect = photos[0]?.cropState?.aspectKey || '4:5';
+    if (files.length === 1) {
+      const compressed = await preparePreviewAsset(files[0]);
+      setEditorState({
+        mode: 'new',
+        sourceUrl: compressed.dataUrl,
+        initialCrop: createDefaultCropState(defaultSharedAspect),
+      });
+      return;
     }
+
+    const added: OotdStagedPhoto[] = [];
+    for (const file of files) {
+      const compressed = await preparePreviewAsset(file);
+      added.push({
+        rawDataUrl: compressed.dataUrl,
+        croppedDataUrl: compressed.dataUrl,
+        cropState: null,
+        aspectRatio: formatAspectRatioFromDimensions(compressed.width, compressed.height, {
+          clampToFeed: true,
+        }),
+        width: compressed.width,
+        height: compressed.height,
+        alt: '',
+      });
+    }
+    setPhotos((prev) => [...prev, ...added].slice(0, 10));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -242,6 +259,7 @@ export const OotdPage: React.FC<OotdPageProps> = ({
       });
 
       removeSessionKey(draftKey);
+      removeIdbDraft(draftKey);
       setPhotos([]);
       setCaption('');
       setSelectedOutfitId('');
@@ -262,7 +280,7 @@ export const OotdPage: React.FC<OotdPageProps> = ({
       <div>
         <h1 className="font-display text-2xl font-bold tracking-tight">Outfit of the Day (OOTD)</h1>
         <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8]">
-          Snap or upload up to 4 photos of what you&rsquo;re wearing today and optionally link a Lookbook fit.
+          Choose up to 10 photos of what you&rsquo;re wearing today and optionally link a Lookbook fit.
         </p>
       </div>
 
@@ -277,7 +295,7 @@ export const OotdPage: React.FC<OotdPageProps> = ({
               <div className="flex items-center justify-between">
                 <h2 className="font-display font-bold text-base">Post Today&rsquo;s Fit</h2>
                 <span className="text-[11px] font-mono-num text-[#4e4c46] dark:text-[#c2bfb8]">
-                  {photos.length}/4 photos
+                  {photos.length}/10 photos
                 </span>
               </div>
 
@@ -355,31 +373,18 @@ export const OotdPage: React.FC<OotdPageProps> = ({
                 </div>
               )}
 
-              {photos.length < 4 && (
-                <div className="grid grid-cols-2 gap-2">
-                  <label className="min-h-[44px] p-3 rounded-card border border-dashed border-[#d4cfc5] dark:border-[#404040] bg-[#f5f4f0]/60 dark:bg-[#171717]/60 flex flex-col items-center justify-center gap-1 cursor-pointer hover:bg-[#eae7e0] dark:hover:bg-[#303030]">
-                    <Camera className="w-4 h-4" />
-                    <span className="text-[11px] font-semibold">Take Photo</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      onChange={handlePhotoFiles}
-                      className="sr-only"
-                    />
-                  </label>
-                  <label className="min-h-[44px] p-3 rounded-card border border-dashed border-[#d4cfc5] dark:border-[#404040] bg-[#f5f4f0]/60 dark:bg-[#171717]/60 flex flex-col items-center justify-center gap-1 cursor-pointer hover:bg-[#eae7e0] dark:hover:bg-[#303030]">
-                    <Upload className="w-4 h-4" />
-                    <span className="text-[11px] font-semibold">Upload Photos</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      multiple
-                      onChange={handlePhotoFiles}
-                      className="sr-only"
-                    />
-                  </label>
-                </div>
+              {photos.length < 10 && (
+                <PhotoPickerButton
+                  multiple={true}
+                  label={`Choose Photos (${photos.length}/10)`}
+                  busyLabel="Preparing photos..."
+                  className="w-full min-h-[44px] p-3 rounded-card border border-dashed border-[#d4cfc5] dark:border-[#404040] bg-[#f5f4f0]/60 dark:bg-[#171717]/60 flex items-center justify-center gap-2 text-xs font-semibold cursor-pointer hover:bg-[#eae7e0] dark:hover:bg-[#303030]"
+                  onFilesSelected={handlePhotoFilesSelected}
+                  onError={(msg) => {
+                    setFormError(msg);
+                    onToast(msg, 'error');
+                  }}
+                />
               )}
 
             <div>
@@ -592,7 +597,7 @@ export const OotdPage: React.FC<OotdPageProps> = ({
                   height,
                   alt: '',
                 },
-              ].slice(0, 4)
+              ].slice(0, 10)
             );
           } else if (typeof editorState.index === 'number') {
             const targetIdx = editorState.index;

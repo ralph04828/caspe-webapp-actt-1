@@ -17,11 +17,11 @@ import { pickFitReaction } from '../data/fitReactions';
 import { AvatarImage } from './AvatarImage';
 import { AvatarCropModal } from './AvatarCropModal';
 import { GarmentImage } from './GarmentImage';
+import { PhotoPickerButton } from './PhotoPickerButton';
 import {
   ArrowRight,
   AtSign,
   Bookmark,
-  Camera,
   Check,
   CheckCircle2,
   Circle,
@@ -34,7 +34,6 @@ import {
   Send,
   Sparkles,
   Sun,
-  Upload,
   UserPlus,
   Users,
   X,
@@ -326,17 +325,10 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onNavigate, onTo
     onToast?.('Welcome to SWOOOSH! Your profile is live.');
   };
 
-  const handleAvatarFilePicked = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
+  const handleAvatarFilePicked = async (file: File) => {
     setStep1Error(null);
-    try {
-      const previewUrl = await preparePreviewDataUrl(file);
-      setCropSourceUrl(previewUrl);
-    } catch (err: any) {
-      setStep1Error(err?.message || 'Could not load image for cropping.');
-    }
+    const previewUrl = await preparePreviewDataUrl(file);
+    setCropSourceUrl(previewUrl);
   };
 
   const handleCropConfirmed = async (croppedDataUrl: string) => {
@@ -402,10 +394,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onNavigate, onTo
     }
   };
 
-  const handleFitPhotoPicked = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
+  const handleFitPhotoPicked = async (file: File) => {
     setFitError(null);
     setUploadingFit(true);
     try {
@@ -421,8 +410,6 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onNavigate, onTo
       setFitAspectRatio(
         formatAspectRatioFromDimensions(uploaded.width, uploaded.height, { clampToFeed: true })
       );
-    } catch (err: any) {
-      setFitError(err?.message || 'Could not compress or upload fit photo.');
     } finally {
       setUploadingFit(false);
     }
@@ -602,7 +589,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onNavigate, onTo
                 </div>
               )}
 
-              {/* Profile Photo Upload + Camera + Circle Crop */}
+              {/* Profile Photo Upload + Circle Crop */}
               <div className="flex flex-wrap items-center gap-4">
                 <AvatarImage
                   src={photoURL}
@@ -616,29 +603,14 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onNavigate, onTo
                     Profile Picture (Optional)
                   </p>
                   <div className="flex flex-wrap gap-2">
-                    <label className="px-3.5 py-2.5 min-h-[44px] rounded-control border border-[#d4cfc5] dark:border-[#404040] bg-[#f5f4f0] dark:bg-[#171717] text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer hover:bg-[#eae7e0] dark:hover:bg-[#303030]">
-                      {uploadingAvatar ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-                      <span>{uploadingAvatar ? 'Saving...' : 'Upload Photo'}</span>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={handleAvatarFilePicked}
-                        disabled={uploadingAvatar}
-                        className="sr-only"
-                      />
-                    </label>
-                    <label className="px-3.5 py-2.5 min-h-[44px] rounded-control border border-[#d4cfc5] dark:border-[#404040] bg-[#f5f4f0] dark:bg-[#171717] text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer hover:bg-[#eae7e0] dark:hover:bg-[#303030]">
-                      <Camera className="w-4 h-4" />
-                      <span>Take Photo</span>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        capture="user"
-                        onChange={handleAvatarFilePicked}
-                        disabled={uploadingAvatar}
-                        className="sr-only"
-                      />
-                    </label>
+                    <PhotoPickerButton
+                      label="Choose Photo"
+                      busyLabel="Saving..."
+                      busy={uploadingAvatar}
+                      className="px-4 py-2.5 min-h-[44px] rounded-control border border-[#d4cfc5] dark:border-[#404040] bg-[#f5f4f0] dark:bg-[#171717] text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer hover:bg-[#eae7e0] dark:hover:bg-[#303030]"
+                      onFileSelected={handleAvatarFilePicked}
+                      onError={(msg) => setStep1Error(msg)}
+                    />
                   </div>
                 </div>
               </div>
@@ -1016,17 +988,15 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onNavigate, onTo
                   />
                 </div>
                 <div className="flex justify-center gap-2">
-                  <label className="px-4 py-2.5 min-h-[44px] rounded-control border border-[#d4cfc5] dark:border-[#404040] text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer hover:bg-[#eae7e0] dark:hover:bg-[#303030]">
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    <span>{uploadingFit ? 'Uploading...' : 'Replace Photo'}</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={handleFitPhotoPicked}
-                      disabled={uploadingFit}
-                      className="sr-only"
-                    />
-                  </label>
+                  <PhotoPickerButton
+                    label="Replace Photo"
+                    busyLabel="Uploading..."
+                    busy={uploadingFit}
+                    icon={<RefreshCw className="w-3.5 h-3.5" />}
+                    className="px-4 py-2.5 min-h-[44px] rounded-control border border-[#d4cfc5] dark:border-[#404040] text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer hover:bg-[#eae7e0] dark:hover:bg-[#303030]"
+                    onFileSelected={handleFitPhotoPicked}
+                    onError={(msg) => setFitError(msg)}
+                  />
                 </div>
               </div>
             ) : (
@@ -1034,30 +1004,15 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onNavigate, onTo
                 <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8]">
                   Photos are compressed in-browser to WebP so they load fast across all devices.
                 </p>
-                <div className="flex flex-col sm:flex-row justify-center gap-2.5">
-                  <label className="px-4 py-3 min-h-[46px] rounded-control bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-bold inline-flex items-center justify-center gap-2 cursor-pointer">
-                    {uploadingFit ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-                    <span>{uploadingFit ? 'Compressing...' : 'Upload from Gallery'}</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={handleFitPhotoPicked}
-                      disabled={uploadingFit}
-                      className="sr-only"
-                    />
-                  </label>
-                  <label className="px-4 py-3 min-h-[46px] rounded-control border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] text-xs font-bold inline-flex items-center justify-center gap-2 cursor-pointer">
-                    <Camera className="w-4 h-4" />
-                    <span>Take a Photo</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      onChange={handleFitPhotoPicked}
-                      disabled={uploadingFit}
-                      className="sr-only"
-                    />
-                  </label>
+                <div className="flex justify-center">
+                  <PhotoPickerButton
+                    label="Choose Photo"
+                    busyLabel="Compressing..."
+                    busy={uploadingFit}
+                    className="px-5 py-3 min-h-[46px] rounded-control bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-bold inline-flex items-center justify-center gap-2 cursor-pointer"
+                    onFileSelected={handleFitPhotoPicked}
+                    onError={(msg) => setFitError(msg)}
+                  />
                 </div>
               </div>
             )}

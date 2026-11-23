@@ -136,6 +136,7 @@ export async function claimUsernameAndSaveProfile(params: {
           userRef,
           cleanData({
             ...(profileUpdatePayload || {}),
+            birthday: null,
             username: newUsernameLower,
             usernameLower: newUsernameLower,
             updatedAt: now,
@@ -161,6 +162,9 @@ export async function claimUsernameAndSaveProfile(params: {
   } catch (error: any) {
     if (error?.message?.includes('is already taken')) {
       throw error;
+    }
+    if (error?.code === 'already-exists') {
+      throw new Error(`@${newUsernameLower} is already taken. Choose another username.`);
     }
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -225,6 +229,7 @@ export async function updateUserProfileDoc(
       doc(db, 'users', uid),
       cleanData({
         ...updates,
+        birthday: null,
         updatedAt: new Date().toISOString(),
       })
     );
@@ -702,6 +707,19 @@ export async function getUserPosts(
     return posts.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
+  }
+}
+
+export async function getPostByIdFirestore(postId: string): Promise<SocialPost | null> {
+  const path = `posts/${postId}`;
+  try {
+    const snap = await getDoc(doc(db, 'posts', postId));
+    return snap.exists() ? (snap.data() as SocialPost) : null;
+  } catch (error: any) {
+    if (error?.code === 'permission-denied') {
+      return null;
+    }
+    handleFirestoreError(error, OperationType.GET, path);
   }
 }
 
@@ -1222,6 +1240,15 @@ export function subscribeUserConversations(
     );
     onUpdate(list);
   });
+}
+
+export async function getConversationDoc(convId: string): Promise<ChatConversation | null> {
+  try {
+    const snap = await getDoc(doc(db, 'conversations', convId));
+    return snap.exists() ? (snap.data() as ChatConversation) : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function getOrCreateDmConversation(

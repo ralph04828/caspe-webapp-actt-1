@@ -5,6 +5,7 @@ import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig(() => {
+  const buildVersion = `${Date.now()}`;
   return {
     plugins: [
       react(),
@@ -42,9 +43,24 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
+          cacheId: `swooosh-${buildVersion}`,
+          skipWaiting: true,
+          clientsClaim: true,
+          cleanupOutdatedCaches: true,
+          navigateFallback: null,
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,jpg,webp,woff2}'],
+          globPatterns: ['**/*.{js,css,ico,png,svg,jpg,webp,woff2}'],
           runtimeCaching: [
+            {
+              urlPattern: ({ request }) =>
+                request.mode === 'navigate' || request.destination === 'document',
+              handler: 'NetworkFirst',
+              options: {
+                cacheName: 'swooosh-html',
+                networkTimeoutSeconds: 4,
+                cacheableResponse: { statuses: [0, 200] },
+              },
+            },
             {
               urlPattern: /^https:\/\/api\.open-meteo\.com\/.*/i,
               handler: 'NetworkFirst',
@@ -84,11 +100,17 @@ export default defineConfig(() => {
     server: {
       port: 3000,
       host: '0.0.0.0',
+      allowedHosts: true as const,
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify—file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
+    },
+    preview: {
+      port: Number(process.env.PORT) || 3000,
+      host: '0.0.0.0',
+      allowedHosts: true as const,
     },
   };
 });

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Check, Loader2, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react';
+import { Check, Loader2, RotateCcw, RotateCw, X, ZoomIn, ZoomOut } from 'lucide-react';
 
 interface AvatarCropModalProps {
   sourceUrl: string;
@@ -18,6 +18,7 @@ export const AvatarCropModal: React.FC<AvatarCropModalProps> = ({
   const [imgEl, setImgEl] = useState<HTMLImageElement | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
+  const [rotationDeg, setRotationDeg] = useState<0 | 90 | 180 | 270>(0);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -34,6 +35,7 @@ export const AvatarCropModal: React.FC<AvatarCropModalProps> = ({
       if (!active) return;
       setImgEl(img);
       setZoom(1);
+      setRotationDeg(0);
       setOffset({ x: 0, y: 0 });
       setLoadError(null);
     };
@@ -47,16 +49,22 @@ export const AvatarCropModal: React.FC<AvatarCropModalProps> = ({
     };
   }, [sourceUrl]);
 
-  const baseScale = imgEl
-    ? Math.max(VIEWPORT_SIZE / imgEl.naturalWidth, VIEWPORT_SIZE / imgEl.naturalHeight)
-    : 1;
+  const getBaseScaleForRot = (img: HTMLImageElement, rot: number) => {
+    const orientedW = rot % 180 !== 0 ? img.naturalHeight : img.naturalWidth;
+    const orientedH = rot % 180 !== 0 ? img.naturalWidth : img.naturalHeight;
+    return Math.max(VIEWPORT_SIZE / orientedW, VIEWPORT_SIZE / orientedH);
+  };
+
+  const baseScale = imgEl ? getBaseScaleForRot(imgEl, rotationDeg) : 1;
   const effectiveScale = baseScale * zoom;
 
-  const clampOffset = (nextX: number, nextY: number, currentZoom = zoom) => {
+  const clampOffset = (nextX: number, nextY: number, currentZoom = zoom, rot = rotationDeg) => {
     if (!imgEl) return { x: 0, y: 0 };
-    const scale = baseScale * currentZoom;
-    const drawW = imgEl.naturalWidth * scale;
-    const drawH = imgEl.naturalHeight * scale;
+    const orientedW = rot % 180 !== 0 ? imgEl.naturalHeight : imgEl.naturalWidth;
+    const orientedH = rot % 180 !== 0 ? imgEl.naturalWidth : imgEl.naturalHeight;
+    const scale = getBaseScaleForRot(imgEl, rot) * currentZoom;
+    const drawW = orientedW * scale;
+    const drawH = orientedH * scale;
     const maxX = Math.max(0, (drawW - VIEWPORT_SIZE) / 2);
     const maxY = Math.max(0, (drawH - VIEWPORT_SIZE) / 2);
     return {
@@ -88,6 +96,12 @@ export const AvatarCropModal: React.FC<AvatarCropModalProps> = ({
     dragStartRef.current = null;
   };
 
+  const handleRotate90 = () => {
+    const nextRot = ((rotationDeg + 90) % 360) as 0 | 90 | 180 | 270;
+    setRotationDeg(nextRot);
+    setOffset((prev) => clampOffset(prev.x, prev.y, zoom, nextRot));
+  };
+
   const handleApplyCrop = async () => {
     if (!imgEl) return;
     setSaving(true);
@@ -101,10 +115,12 @@ export const AvatarCropModal: React.FC<AvatarCropModalProps> = ({
       const ratio = OUTPUT_SIZE / VIEWPORT_SIZE;
       const drawW = imgEl.naturalWidth * effectiveScale * ratio;
       const drawH = imgEl.naturalHeight * effectiveScale * ratio;
-      const drawX = (OUTPUT_SIZE - drawW) / 2 + offset.x * ratio;
-      const drawY = (OUTPUT_SIZE - drawH) / 2 + offset.y * ratio;
 
-      ctx.drawImage(imgEl, drawX, drawY, drawW, drawH);
+      ctx.save();
+      ctx.translate(OUTPUT_SIZE / 2 + offset.x * ratio, OUTPUT_SIZE / 2 + offset.y * ratio);
+      ctx.rotate((rotationDeg * Math.PI) / 180);
+      ctx.drawImage(imgEl, -drawW / 2, -drawH / 2, drawW, drawH);
+      ctx.restore();
 
       let dataUrl = canvas.toDataURL('image/webp', 0.86);
       if (!dataUrl.startsWith('data:image/webp')) {
@@ -132,7 +148,7 @@ export const AvatarCropModal: React.FC<AvatarCropModalProps> = ({
               Crop Profile Photo
             </h3>
             <p className="text-[11px] text-[#4e4c46] dark:text-[#c2bfb8]">
-              Drag to reposition and adjust zoom for your circle avatar.
+              Drag to reposition, rotate, and adjust zoom for your circle avatar.
             </p>
           </div>
           <button
@@ -166,11 +182,15 @@ export const AvatarCropModal: React.FC<AvatarCropModalProps> = ({
                     alt="Crop preview"
                     draggable={false}
                     style={{
+                      position: 'absolute',
+                      left: '50%',
+                      top: '50%',
                       width: imgEl.naturalWidth * effectiveScale,
                       height: imgEl.naturalHeight * effectiveScale,
                       maxWidth: 'none',
                       maxHeight: 'none',
-                      transform: `translate(${(VIEWPORT_SIZE - imgEl.naturalWidth * effectiveScale) / 2 + offset.x}px, ${(VIEWPORT_SIZE - imgEl.naturalHeight * effectiveScale) / 2 + offset.y}px)`,
+                      transform: `translate(-50%, -50%) translate(${offset.x}px, ${offset.y}px) rotate(${rotationDeg}deg)`,
+                      transformOrigin: 'center center',
                     }}
                     className="pointer-events-none select-none"
                   />
@@ -183,7 +203,7 @@ export const AvatarCropModal: React.FC<AvatarCropModalProps> = ({
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
               <ZoomOut className="w-4 h-4 text-[#4e4c46] dark:text-[#c2bfb8] shrink-0" />
               <input
                 type="range"
@@ -202,11 +222,23 @@ export const AvatarCropModal: React.FC<AvatarCropModalProps> = ({
               <ZoomIn className="w-4 h-4 text-[#4e4c46] dark:text-[#c2bfb8] shrink-0" />
               <button
                 type="button"
+                onClick={handleRotate90}
+                disabled={!imgEl}
+                aria-label="Rotate 90 degrees"
+                title="Rotate 90° clockwise"
+                className="w-9 h-9 rounded-control border border-[#d4cfc5] dark:border-[#404040] flex items-center justify-center cursor-pointer disabled:opacity-45"
+              >
+                <RotateCw className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
                 onClick={() => {
                   setZoom(1);
+                  setRotationDeg(0);
                   setOffset({ x: 0, y: 0 });
                 }}
                 aria-label="Reset crop"
+                title="Reset rotation and zoom"
                 className="w-9 h-9 rounded-control border border-[#d4cfc5] dark:border-[#404040] flex items-center justify-center cursor-pointer"
               >
                 <RotateCcw className="w-3.5 h-3.5" />

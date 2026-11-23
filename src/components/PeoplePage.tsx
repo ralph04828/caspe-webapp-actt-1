@@ -46,6 +46,7 @@ export const PeoplePage: React.FC<PeoplePageProps> = ({
 
   const [queryText, setQueryText] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+  const [recentlyAcceptedUsers, setRecentlyAcceptedUsers] = useState<UserProfile[]>([]);
 
   const others = useMemo(
     () =>
@@ -295,6 +296,34 @@ export const PeoplePage: React.FC<PeoplePageProps> = ({
                     type="button"
                     onClick={async () => {
                       await acceptFriendRequest(req);
+                      const fallbackProfile: UserProfile = discoverProfiles.find(
+                        (p) => p.uid === req.requesterId
+                      ) || {
+                        uid: req.requesterId,
+                        email: '',
+                        username: req.requesterUsername,
+                        usernameLower: req.requesterUsername.toLowerCase(),
+                        displayName: req.requesterName || req.requesterUsername,
+                        photoURL: req.requesterPhotoUrl,
+                        bio: '',
+                        stylePreference: '',
+                        styleTags: [],
+                        followersCount: 0,
+                        followingCount: 0,
+                        friendsCount: 1,
+                        postsCount: 0,
+                        isPublic: true,
+                        defaultItemVisibility: 'public',
+                        defaultOutfitVisibility: 'public',
+                        autoDirtyOnWear: false,
+                        isAdultConfirmed: true,
+                        createdAt: new Date().toISOString(),
+                      };
+                      setRecentlyAcceptedUsers((prev) =>
+                        prev.some((u) => u.uid === fallbackProfile.uid)
+                          ? prev
+                          : [fallbackProfile, ...prev]
+                      );
                       onToast(`Accepted @${req.requesterUsername}'s friend request!`);
                     }}
                     className="min-h-[38px] px-3 py-1.5 rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-semibold flex items-center gap-1 cursor-pointer"
@@ -314,6 +343,33 @@ export const PeoplePage: React.FC<PeoplePageProps> = ({
                     <X className="w-3.5 h-3.5" />
                   </button>
                 </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Newly Accepted Friends — Immediate Message */}
+      {recentlyAcceptedUsers.length > 0 && (
+        <section className="p-4 rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] space-y-2.5">
+          <p className="text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8]">
+            New Friends
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {recentlyAcceptedUsers.map((friend) => (
+              <div
+                key={friend.uid}
+                className="flex items-center gap-2.5 px-3 py-1.5 rounded-full border border-[#d4cfc5] dark:border-[#404040] bg-[#f5f4f0] dark:bg-[#171717]"
+              >
+                <span className="text-xs font-semibold">@{friend.username}</span>
+                <button
+                  type="button"
+                  onClick={() => onMessageUser(friend)}
+                  className="px-2.5 py-1 rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer"
+                >
+                  <MessageSquare className="w-3 h-3" />
+                  <span>Message</span>
+                </button>
               </div>
             ))}
           </div>

@@ -15,21 +15,21 @@ import {
   removeSessionKey,
   saveSessionJson,
 } from '../utils/draftStorage';
+import { loadIdbDraft, removeIdbDraft, saveIdbDraft } from '../utils/indexedDbDrafts';
 import { GarmentImage } from './GarmentImage';
 import { PhotoCropState, PhotoEditorModal, createDefaultCropState } from './PhotoEditorModal';
+import { PhotoPickerButton } from './PhotoPickerButton';
 import { DiscardDraftDialog } from './DiscardDraftDialog';
 import { ErrorBoundary } from './ErrorBoundary';
 import {
   AlertCircle,
   X,
-  Upload,
   Scissors,
   Globe,
   Users,
   Lock,
   Repeat,
   Loader2,
-  Camera,
   Calendar,
   Crop,
 } from 'lucide-react';
@@ -132,6 +132,7 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
     if (!open) return;
     setError(null);
 
+    let cancelled = false;
     if (initialPlannedOutfit) {
       setPostType('outfit');
       setSelectedOutfitId(initialPlannedOutfit.outfit.id);
@@ -150,8 +151,13 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
       setIsPlannedCopy(false);
     } else {
       setIsPlannedCopy(false);
-      const saved = loadSessionJson<CreatePostDraft>(draftKey);
-      if (saved && ((saved.photos && saved.photos.length > 0) || saved.caption?.trim() || saved.occasion?.trim())) {
+      const applyDraft = (saved: CreatePostDraft | null) => {
+        if (!saved) return false;
+        const hasData =
+          (Array.isArray(saved.photos) && saved.photos.length > 0) ||
+          Boolean(saved.caption?.trim()) ||
+          Boolean(saved.occasion?.trim());
+        if (!hasData) return false;
         setPostType(saved.postType || 'outfit');
         setSelectedOutfitId(saved.selectedOutfitId || outfits[0]?.id || '');
         setSelectedItemId(saved.selectedItemId || wardrobe[0]?.id || '');
@@ -160,18 +166,34 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
         setVisibility(saved.visibility || userProfile?.defaultOutfitVisibility || 'public');
         setAllowRemix(saved.allowRemix !== false);
         setCommentPolicy(saved.commentPolicy || 'everyone');
-        setPhotos(Array.isArray(saved.photos) ? saved.photos : []);
-      } else {
+        setPhotos(Array.isArray(saved.photos) ? saved.photos.slice(0, 10) : []);
+        return true;
+      };
+
+      const savedSession = loadSessionJson<CreatePostDraft>(draftKey);
+      const restoredFromSession = applyDraft(savedSession);
+
+      loadIdbDraft<CreatePostDraft>(draftKey).then((idbDraft) => {
+        if (cancelled || !idbDraft) return;
+        if (!restoredFromSession || (Array.isArray(idbDraft.photos) && idbDraft.photos.length > 0 && (!savedSession?.photos || savedSession.photos.length === 0))) {
+          applyDraft(idbDraft);
+        }
+      });
+
+      if (!restoredFromSession) {
         if (!selectedOutfitId && outfits[0]?.id) setSelectedOutfitId(outfits[0].id);
         if (!selectedItemId && wardrobe[0]?.id) setSelectedItemId(wardrobe[0].id);
       }
     }
+    return () => {
+      cancelled = true;
+    };
   }, [open, initialOutfitId, initialItemId, initialPlannedOutfit, draftKey]);
 
-  // Keep draft synced to sessionStorage when open in free-compose mode
+  // Keep draft synced to IndexedDB (photos + fields) and lightweight metadata to sessionStorage
   useEffect(() => {
     if (!open || isPlannedCopy || initialOutfitId || initialItemId) return;
-    const payload: CreatePostDraft = {
+    const fullPayload: CreatePostDraft = {
       postType,
       selectedOutfitId,
       selectedItemId,
@@ -182,7 +204,17 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
       commentPolicy,
       photos,
     };
-    saveSessionJson(draftKey, payload);
+    const hasContent = Boolean(photos.length > 0 || caption.trim() || occasion.trim());
+    if (!hasContent) {
+      removeSessionKey(draftKey);
+      removeIdbDraft(draftKey);
+      return;
+    }
+    saveIdbDraft(draftKey, fullPayload);
+    saveSessionJson(draftKey, {
+      ...fullPayload,
+      photos: photos.length <= 2 ? photos : [],
+    });
   }, [
     open,
     isPlannedCopy,
@@ -217,6 +249,7 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
   const forceClose = () => {
     setDiscardOpen(false);
     removeSessionKey(draftKey);
+    removeIdbDraft(draftKey);
     resetComposer();
     onClose();
   };
@@ -234,47 +267,40 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
 
   if (!open) return null;
 
-  const handleFilesChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []).slice(0, 4 - photos.length);
-    e.target.value = '';
+  const handleFilesSelected = async (selectedFiles: File[]) => {
+    const remaining = Math.max(0, 10 - photos.length);
+    const files = selectedFiles.slice(0, remaining);
     if (files.length === 0) return;
     setError(null);
-    try {
-      const defaultSharedAspect = photos[0]?.cropState?.aspectKey || '4:5';
-      if (files.length === 1) {
-        const compressed = await preparePreviewAsset(files[0]);
-        setEditorState({
-          mode: 'new',
-          sourceUrl: compressed.dataUrl,
-          initialCrop: createDefaultCropState(defaultSharedAspect),
-        });
-        return;
-      }
-
-      const added: StagedPhoto[] = [];
-      for (const file of files) {
-        const compressed = await preparePreviewAsset(file);
-        added.push({
-          rawDataUrl: compressed.dataUrl,
-          croppedDataUrl: compressed.dataUrl,
-          cropState: null,
-          aspectRatio: formatAspectRatioFromDimensions(compressed.width, compressed.height, {
-            clampToFeed: true,
-          }),
-          width: compressed.width,
-          height: compressed.height,
-          cutoutDataUrl: null,
-          useCutout: false,
-          altText: '',
-        });
-      }
-      setPhotos((prev) => [...prev, ...added].slice(0, 4));
-    } catch (err: any) {
-      const msg = err?.message || 'Could not process selected photo.';
-      console.error('CreatePostModal photo processing failed:', err);
-      setError(msg);
-      onToast?.(msg, 'error');
+    const defaultSharedAspect = photos[0]?.cropState?.aspectKey || '4:5';
+    if (files.length === 1) {
+      const compressed = await preparePreviewAsset(files[0]);
+      setEditorState({
+        mode: 'new',
+        sourceUrl: compressed.dataUrl,
+        initialCrop: createDefaultCropState(defaultSharedAspect),
+      });
+      return;
     }
+
+    const added: StagedPhoto[] = [];
+    for (const file of files) {
+      const compressed = await preparePreviewAsset(file);
+      added.push({
+        rawDataUrl: compressed.dataUrl,
+        croppedDataUrl: compressed.dataUrl,
+        cropState: null,
+        aspectRatio: formatAspectRatioFromDimensions(compressed.width, compressed.height, {
+          clampToFeed: true,
+        }),
+        width: compressed.width,
+        height: compressed.height,
+        cutoutDataUrl: null,
+        useCutout: false,
+        altText: '',
+      });
+    }
+    setPhotos((prev) => [...prev, ...added].slice(0, 10));
   };
 
   const handleRemoveBackgroundFirst = async () => {
@@ -440,6 +466,7 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
       });
 
       removeSessionKey(draftKey);
+      removeIdbDraft(draftKey);
       resetComposer();
       onPublished('Shared to the SWOOOSH feed.');
       onClose();
@@ -569,11 +596,11 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
                 </div>
               )}
 
-              {/* Multi-photo Upload (up to 4) */}
+              {/* Multi-photo Upload (up to 10) */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8]">
-                    {postType === 'ootd' ? 'OOTD Photos (up to 4)' : 'Photos (Optional, up to 4)'}
+                    {postType === 'ootd' ? 'OOTD Photos (up to 10)' : 'Photos (Optional, up to 10)'}
                   </label>
                   {photos.length > 0 && (
                     <button
@@ -653,19 +680,18 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
                   </div>
                 )}
 
-                {photos.length < 4 && (
-                  <div className="flex flex-wrap gap-2">
-                    <label className="flex-1 min-w-[140px] flex items-center justify-center gap-2 p-3 min-h-[44px] rounded-control border border-dashed border-[#d4cfc5] dark:border-[#404040] bg-white/60 dark:bg-[#171717]/60 hover:bg-white dark:hover:bg-[#171717] cursor-pointer text-xs font-semibold">
-                      <Camera className="w-4 h-4" />
-                      <span>Take Photo</span>
-                      <input type="file" accept="image/*" capture="environment" onChange={handleFilesChange} className="sr-only" />
-                    </label>
-                    <label className="flex-1 min-w-[140px] flex items-center justify-center gap-2 p-3 min-h-[44px] rounded-control border border-dashed border-[#d4cfc5] dark:border-[#404040] bg-white/60 dark:bg-[#171717]/60 hover:bg-white dark:hover:bg-[#171717] cursor-pointer text-xs font-semibold">
-                      <Upload className="w-4 h-4" />
-                      <span>Upload ({photos.length}/4)</span>
-                      <input type="file" accept="image/*" multiple onChange={handleFilesChange} className="sr-only" />
-                    </label>
-                  </div>
+                {photos.length < 10 && (
+                  <PhotoPickerButton
+                    multiple={true}
+                    label={`Choose Photos (${photos.length}/10)`}
+                    busyLabel="Preparing photos..."
+                    className="w-full flex items-center justify-center gap-2 p-3 min-h-[44px] rounded-control border border-dashed border-[#d4cfc5] dark:border-[#404040] bg-white/60 dark:bg-[#171717]/60 hover:bg-white dark:hover:bg-[#171717] cursor-pointer text-xs font-semibold"
+                    onFilesSelected={handleFilesSelected}
+                    onError={(msg) => {
+                      setError(msg);
+                      onToast?.(msg, 'error');
+                    }}
+                  />
                 )}
               </div>
 
@@ -762,6 +788,7 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
                     type="button"
                     onClick={() => {
                       removeSessionKey(draftKey);
+                      removeIdbDraft(draftKey);
                       resetComposer();
                       onClose();
                       onOpenCreateMyDay();
@@ -837,7 +864,7 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
                   useCutout: false,
                   altText: '',
                 },
-              ].slice(0, 4)
+              ].slice(0, 10)
             );
           } else if (typeof editorState.index === 'number') {
             const targetIdx = editorState.index;

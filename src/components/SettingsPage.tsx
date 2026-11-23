@@ -1,15 +1,16 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { FIT_VIBE_TAGS, Visibility } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useWardrobe } from '../context/WardrobeContext';
 import { useSocial } from '../context/SocialContext';
-import { preparePreviewDataUrl, uploadImageAsset } from '../services/storageService';
+import { preparePreviewDataUrl, resolveMediaRef, uploadImageAsset } from '../services/storageService';
 import { normalizeUsername } from '../utils/formatters';
 import { AvatarImage } from './AvatarImage';
 import { PhotoEditorModal, createDefaultCropState } from './PhotoEditorModal';
+import { PhotoPickerButton } from './PhotoPickerButton';
 import { ErrorBoundary } from './ErrorBoundary';
-import { AlertCircle, Copy, Download, Loader2, Lock, Save, Shield, Trash2, Upload } from 'lucide-react';
+import { AlertCircle, Copy, Download, Loader2, Lock, RotateCw, Save, Shield, Trash2, Upload } from 'lucide-react';
 
 interface SettingsPageProps {
   onToast: (msg: string, type?: 'success' | 'error') => void;
@@ -37,7 +38,9 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onToast }) => {
   const [autoDirtyOnWear, setAutoDirtyOnWear] = useState(Boolean(userProfile?.autoDirtyOnWear));
   const [showOnlineStatus, setShowOnlineStatus] = useState(userProfile?.showOnlineStatus !== false);
   const [saving, setSaving] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [loadingExistingAvatar, setLoadingExistingAvatar] = useState(false);
   const [avatarCropSource, setAvatarCropSource] = useState<string | null>(null);
   const [avatarError, setAvatarError] = useState<string | null>(null);
 
@@ -45,10 +48,35 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onToast }) => {
   const [newPwd, setNewPwd] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file || !userProfile) return;
+  useEffect(() => {
+    if (!userProfile) return;
+    setDisplayName(userProfile.displayName || '');
+    setUsername(userProfile.username || '');
+    setBio(userProfile.bio || '');
+    setPronouns(userProfile.pronouns || '');
+    setLocation(userProfile.location || '');
+    setStyleTags(userProfile.styleTags || ['Streetwear']);
+    setIsPublic(userProfile.isPublic !== false);
+    setDefaultItemVis(userProfile.defaultItemVisibility || 'public');
+    setDefaultOutfitVis(userProfile.defaultOutfitVisibility || 'public');
+    setAutoDirtyOnWear(Boolean(userProfile.autoDirtyOnWear));
+    setShowOnlineStatus(userProfile.showOnlineStatus !== false);
+  }, [
+    userProfile?.uid,
+    userProfile?.displayName,
+    userProfile?.username,
+    userProfile?.bio,
+    userProfile?.pronouns,
+    userProfile?.location,
+    userProfile?.isPublic,
+    userProfile?.defaultItemVisibility,
+    userProfile?.defaultOutfitVisibility,
+    userProfile?.autoDirtyOnWear,
+    userProfile?.showOnlineStatus,
+  ]);
+
+  const handleAvatarFileSelected = async (file: File) => {
+    if (!userProfile) return;
     setAvatarError(null);
     try {
       const preview = await preparePreviewDataUrl(file);
@@ -58,6 +86,26 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onToast }) => {
       console.error('Avatar preview load failed:', err);
       setAvatarError(msg);
       onToast(msg, 'error');
+    }
+  };
+
+  const handleRotateExistingAvatar = async () => {
+    if (!userProfile) return;
+    setAvatarError(null);
+    setLoadingExistingAvatar(true);
+    try {
+      const resolved = await resolveMediaRef(userProfile.photoURL, userProfile.mediaId);
+      if (!resolved.url) {
+        throw new Error(resolved.reason || 'Current profile photo could not be loaded for editing.');
+      }
+      setAvatarCropSource(resolved.url);
+    } catch (err: any) {
+      const msg = err?.message || 'Could not open profile photo editor.';
+      console.error('Load existing avatar for rotation failed:', err);
+      setAvatarError(msg);
+      onToast(msg, 'error');
+    } finally {
+      setLoadingExistingAvatar(false);
     }
   };
 
@@ -83,10 +131,11 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onToast }) => {
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
+    setProfileError(null);
     try {
-      await updateAccountProfile({
+      const normalizedNextUsername = normalizeUsername(username);
+      const updates: Parameters<typeof updateAccountProfile>[0] = {
         displayName: displayName.trim(),
-        username: normalizeUsername(username),
         bio: bio.trim(),
         pronouns: pronouns.trim(),
         location: location.trim(),
@@ -96,11 +145,16 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onToast }) => {
         defaultOutfitVisibility: defaultOutfitVis,
         autoDirtyOnWear,
         showOnlineStatus,
-      });
+      };
+      if (normalizedNextUsername && normalizedNextUsername !== userProfile?.usernameLower) {
+        updates.username = normalizedNextUsername;
+      }
+      await updateAccountProfile(updates);
       onToast('Profile and privacy settings saved.');
     } catch (err: any) {
       const msg = err?.message || 'Failed to update settings.';
       console.error('Profile settings save failed:', err);
+      setProfileError(msg);
       onToast(msg, 'error');
     } finally {
       setSaving(false);
@@ -192,7 +246,17 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onToast }) => {
           </div>
         )}
 
-        <div className="flex items-center justify-between gap-4">
+        {profileError && (
+          <div
+            role="alert"
+            className="p-3 rounded-control border border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300 text-xs flex items-start gap-2"
+          >
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>{profileError}</span>
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <AvatarImage
               src={userProfile?.photoURL}
@@ -208,15 +272,35 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onToast }) => {
               </p>
             </div>
           </div>
-          <label className="px-3 py-1.5 min-h-[40px] rounded-control border border-[#d4cfc5] dark:border-[#404040] text-xs font-semibold flex items-center gap-1.5 cursor-pointer hover:bg-[#eae7e0] dark:hover:bg-[#303030]">
-            {uploadingAvatar ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <Upload className="w-3.5 h-3.5" />
+          <div className="flex flex-wrap items-center gap-2">
+            {(userProfile?.photoURL || userProfile?.mediaId) && (
+              <button
+                type="button"
+                disabled={loadingExistingAvatar || uploadingAvatar}
+                onClick={handleRotateExistingAvatar}
+                className="px-3 py-1.5 min-h-[40px] rounded-control border border-[#d4cfc5] dark:border-[#404040] text-xs font-semibold flex items-center gap-1.5 cursor-pointer hover:bg-[#eae7e0] dark:hover:bg-[#303030] disabled:opacity-50"
+              >
+                {loadingExistingAvatar ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <RotateCw className="w-3.5 h-3.5" />
+                )}
+                <span>Rotate / Crop</span>
+              </button>
             )}
-            <span>{uploadingAvatar ? 'Uploading...' : 'Change Avatar'}</span>
-            <input type="file" accept="image/*" onChange={handleAvatarUpload} disabled={uploadingAvatar} className="sr-only" />
-          </label>
+            <PhotoPickerButton
+              label="Change Avatar"
+              busyLabel="Preparing..."
+              busy={uploadingAvatar}
+              icon={<Upload className="w-3.5 h-3.5" />}
+              className="px-3 py-1.5 min-h-[40px] rounded-control border border-[#d4cfc5] dark:border-[#404040] text-xs font-semibold flex items-center gap-1.5 cursor-pointer hover:bg-[#eae7e0] dark:hover:bg-[#303030]"
+              onFileSelected={handleAvatarFileSelected}
+              onError={(msg) => {
+                setAvatarError(msg);
+                onToast(msg, 'error');
+              }}
+            />
+          </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
