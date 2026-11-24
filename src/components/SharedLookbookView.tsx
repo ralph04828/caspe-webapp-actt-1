@@ -81,10 +81,10 @@ export const SharedLookbookView: React.FC<SharedLookbookViewProps> = ({
                   className="rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] overflow-hidden"
                 >
                   <div className="p-3 bg-[#eae7e0] dark:bg-[#171717] grid grid-cols-3 gap-2">
-                    {outfit.pieces.slice(0, 3).map((p, idx) => (
+                    {outfit.pieces.map((p, idx) => (
                       <div
                         key={idx}
-                        className="aspect-square rounded-control overflow-hidden bg-white dark:bg-[#242424]"
+                        className="relative aspect-square rounded-control overflow-hidden bg-white dark:bg-[#242424]"
                       >
                         <GarmentImage
                           src={p.thumbUrl || p.imageUrl}
@@ -92,6 +92,11 @@ export const SharedLookbookView: React.FC<SharedLookbookViewProps> = ({
                           alt={p.name}
                           isPrivatePlaceholder={p.isPrivatePlaceholder}
                         />
+                        {p.layerLabel && (
+                          <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded-chip bg-black/70 text-white text-[9px] font-medium">
+                            {p.layerLabel}
+                          </span>
+                        )}
                       </div>
                     ))}
                   </div>

@@ -472,6 +472,12 @@ export const AuthPage: React.FC = () => {
                   </>
                 )}
               </button>
+
+              {view === 'signup' && (
+                <p className="text-[11px] text-center text-[#4e4c46] dark:text-[#c2bfb8]">
+                  We&apos;ll send a quick verification link to your inbox after sign-up.
+                </p>
+              )}
             </form>
 
             <div className="flex items-center justify-between text-xs pt-2 border-t border-[#d4cfc5] dark:border-[#404040]">

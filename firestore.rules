@@ -85,6 +85,7 @@ service cloud.firestore {
         (!('bio' in data) || data.bio == null || (data.bio is string && data.bio.size() <= 300)) &&
         (!('pronouns' in data) || data.pronouns == null || (data.pronouns is string && data.pronouns.size() <= 40)) &&
         (!('location' in data) || data.location == null || (data.location is string && data.location.size() <= 80)) &&
+        (!('customStyles' in data) || data.customStyles == null || (data.customStyles is list && data.customStyles.size() <= 40)) &&
         (!('onboardingCompleted' in data) || data.onboardingCompleted == null || data.onboardingCompleted is bool) &&
         (!('onboardingStep' in data) || data.onboardingStep == null || data.onboardingStep in [1, 2, 3, 'reaction', 'friends']);
     }
@@ -206,6 +207,7 @@ service cloud.firestore {
         incoming().name is string &&
         incoming().name.size() >= 1 &&
         incoming().name.size() <= 140 &&
+        (!('sizeSystem' in incoming()) || incoming().sizeSystem == null || incoming().sizeSystem in ['US', 'EU', 'UK', 'CM', 'Letter', 'Waist', 'Other']) &&
         incoming().visibility in ['public', 'friends', 'followers', 'private'];
       allow update: if isSignedIn() &&
         isValidId(itemId) &&
@@ -214,6 +216,7 @@ service cloud.firestore {
         incoming().name is string &&
         incoming().name.size() >= 1 &&
         incoming().name.size() <= 140 &&
+        (!('sizeSystem' in incoming()) || incoming().sizeSystem == null || incoming().sizeSystem in ['US', 'EU', 'UK', 'CM', 'Letter', 'Waist', 'Other']) &&
         incoming().visibility in ['public', 'friends', 'followers', 'private'];
       allow delete: if isSignedIn() && isValidId(itemId) && existing().userId == request.auth.uid;
     }
@@ -228,6 +231,8 @@ service cloud.firestore {
         incoming().name is string &&
         incoming().name.size() >= 1 &&
         incoming().name.size() <= 140 &&
+        (!('topIds' in incoming()) || incoming().topIds == null || (incoming().topIds is list && incoming().topIds.size() <= 5)) &&
+        (!('accessoryIds' in incoming()) || incoming().accessoryIds == null || (incoming().accessoryIds is list && incoming().accessoryIds.size() <= 8)) &&
         incoming().visibility in ['public', 'friends', 'followers', 'private'];
       allow update: if isSignedIn() &&
         isValidId(outfitId) &&
@@ -236,6 +241,8 @@ service cloud.firestore {
         incoming().name is string &&
         incoming().name.size() >= 1 &&
         incoming().name.size() <= 140 &&
+        (!('topIds' in incoming()) || incoming().topIds == null || (incoming().topIds is list && incoming().topIds.size() <= 5)) &&
+        (!('accessoryIds' in incoming()) || incoming().accessoryIds == null || (incoming().accessoryIds is list && incoming().accessoryIds.size() <= 8)) &&
         incoming().visibility in ['public', 'friends', 'followers', 'private'];
       allow delete: if isSignedIn() && isValidId(outfitId) && existing().userId == request.auth.uid;
     }
@@ -255,6 +262,7 @@ service cloud.firestore {
         isValidId(postId) &&
         incoming().userId == request.auth.uid &&
         incoming().postType in ['outfit', 'piece', 'ootd'] &&
+        (!('title' in incoming()) || incoming().title == null || (incoming().title is string && incoming().title.size() <= 140)) &&
         (!('caption' in incoming()) || incoming().caption == null || (incoming().caption is string && incoming().caption.size() <= 1000)) &&
         (!('outfitId' in incoming()) || incoming().outfitId == null || incoming().outfitId is string) &&
         (!('itemId' in incoming()) || incoming().itemId == null || incoming().itemId is string) &&
@@ -265,6 +273,7 @@ service cloud.firestore {
       allow update: if isSignedIn() && isValidId(postId) && (
         (existing().userId == request.auth.uid &&
           incoming().userId == existing().userId &&
+          (!('title' in incoming()) || incoming().title == null || (incoming().title is string && incoming().title.size() <= 140)) &&
           (!('caption' in incoming()) || incoming().caption == null || (incoming().caption is string && incoming().caption.size() <= 1000)) &&
           (!('outfitId' in incoming()) || incoming().outfitId == null || incoming().outfitId is string) &&
           (!('itemId' in incoming()) || incoming().itemId == null || incoming().itemId is string) &&
@@ -567,6 +576,81 @@ service cloud.firestore {
       allow create: if isSignedIn() && isValidId(token) && incoming().userId == request.auth.uid;
       allow update: if isSignedIn() && isValidId(token) && existing().userId == request.auth.uid;
       allow delete: if isSignedIn() && isValidId(token) && existing().userId == request.auth.uid;
+    }
+
+    function isCallParticipant(callData) {
+      return isSignedIn() &&
+        'participants' in callData &&
+        callData.participants is list &&
+        callData.participants.size() == 2 &&
+        request.auth.uid in callData.participants;
+    }
+
+    // 1-to-1 WebRTC Voice & Video Call Signaling (Friends Only)
+    match /calls/{callId} {
+      allow get: if isValidId(callId) && isCallParticipant(existing());
+      allow list: if isSignedIn() && (
+        existing().calleeId == request.auth.uid ||
+        existing().callerId == request.auth.uid ||
+        ('participants' in existing() && request.auth.uid in existing().participants)
+      );
+      allow create: if isSignedIn() &&
+        isValidId(callId) &&
+        incoming().id == callId &&
+        incoming().callerId == request.auth.uid &&
+        incoming().calleeId is string &&
+        incoming().calleeId != request.auth.uid &&
+        incoming().participants is list &&
+        incoming().participants.size() == 2 &&
+        request.auth.uid in incoming().participants &&
+        incoming().calleeId in incoming().participants &&
+        isFriendOf(incoming().calleeId) &&
+        incoming().callType in ['voice', 'video'] &&
+        incoming().status == 'ringing' &&
+        (!('offerSdp' in incoming()) || incoming().offerSdp == null || (incoming().offerSdp is string && incoming().offerSdp.size() <= 30000));
+      allow update: if isValidId(callId) &&
+        isCallParticipant(existing()) &&
+        incoming().callerId == existing().callerId &&
+        incoming().calleeId == existing().calleeId &&
+        incoming().participants == existing().participants &&
+        incoming().status in ['ringing', 'active', 'ended', 'declined', 'missed'] &&
+        (!('offerSdp' in incoming()) || incoming().offerSdp == null || (incoming().offerSdp is string && incoming().offerSdp.size() <= 30000)) &&
+        (!('answerSdp' in incoming()) || incoming().answerSdp == null || (incoming().answerSdp is string && incoming().answerSdp.size() <= 30000));
+      allow delete: if isValidId(callId) && isCallParticipant(existing());
+
+      match /callerCandidates/{candidateId} {
+        allow read: if isValidId(callId) &&
+          isValidId(candidateId) &&
+          exists(/databases/$(database)/documents/calls/$(callId)) &&
+          isCallParticipant(get(/databases/$(database)/documents/calls/$(callId)).data);
+        allow create: if isValidId(callId) &&
+          isValidId(candidateId) &&
+          exists(/databases/$(database)/documents/calls/$(callId)) &&
+          isCallParticipant(get(/databases/$(database)/documents/calls/$(callId)).data) &&
+          incoming().candidate is string &&
+          incoming().candidate.size() <= 4096;
+        allow delete: if isValidId(callId) &&
+          isValidId(candidateId) &&
+          exists(/databases/$(database)/documents/calls/$(callId)) &&
+          isCallParticipant(get(/databases/$(database)/documents/calls/$(callId)).data);
+      }
+
+      match /calleeCandidates/{candidateId} {
+        allow read: if isValidId(callId) &&
+          isValidId(candidateId) &&
+          exists(/databases/$(database)/documents/calls/$(callId)) &&
+          isCallParticipant(get(/databases/$(database)/documents/calls/$(callId)).data);
+        allow create: if isValidId(callId) &&
+          isValidId(candidateId) &&
+          exists(/databases/$(database)/documents/calls/$(callId)) &&
+          isCallParticipant(get(/databases/$(database)/documents/calls/$(callId)).data) &&
+          incoming().candidate is string &&
+          incoming().candidate.size() <= 4096;
+        allow delete: if isValidId(callId) &&
+          isValidId(candidateId) &&
+          exists(/databases/$(database)/documents/calls/$(callId)) &&
+          isCallParticipant(get(/databases/$(database)/documents/calls/$(callId)).data);
+      }
     }
   }
 }

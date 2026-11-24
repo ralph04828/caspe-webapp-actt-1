@@ -15,6 +15,9 @@ import {
   browserLocalPersistence,
   browserSessionPersistence,
   deleteUser,
+  sendEmailVerification,
+  reload,
+  fetchSignInMethodsForEmail,
 } from 'firebase/auth';
 import { auth, googleProvider } from '../firebase';
 import {
@@ -39,12 +42,15 @@ interface AuthContextType {
   userProfile: UserProfile | null;
   loading: boolean;
   isDemoMode: boolean;
+  isEmailVerified: boolean;
   needsOnboarding: boolean;
   isLegacyStep1Only: boolean;
   inviteUsername: string | null;
   clearInviteUsername: () => void;
   error: string | null;
   clearError: () => void;
+  resendVerificationEmail: () => Promise<void>;
+  refreshAuthUser: () => Promise<boolean>;
   signIn: (email: string, password: string, rememberMe?: boolean) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   signUp: (params: {
@@ -86,6 +92,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [isDemoMode, setIsDemoMode] = useState(false);
+  const [emailVerifiedFlag, setEmailVerifiedFlag] = useState(false);
   const [isLegacyStep1Only, setIsLegacyStep1Only] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [inviteUsername, setInviteUsername] = useState<string | null>(() => {
@@ -156,6 +163,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         localStorage.removeItem(DEMO_SESSION_KEY);
         setIsDemoMode(false);
         setCurrentUser(user);
+        setEmailVerifiedFlag(Boolean(user.emailVerified));
 
         try {
           if (pendingSignupRef.current) {
@@ -214,6 +222,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setLoading(false);
       } else {
         setCurrentUser(null);
+        setEmailVerifiedFlag(false);
         setIsLegacyStep1Only(false);
         if (localStorage.getItem(DEMO_SESSION_KEY) !== 'true') {
           setUserProfile(null);
@@ -225,9 +234,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => unsubscribe();
   }, []);
 
-  // Presence heartbeat for live online / last-seen dot (only once profile exists in Firestore)
+  const hasPasswordProvider = Boolean(
+    currentUser?.providerData?.some((p) => p.providerId === 'password')
+  );
+  const isEmailVerified = isDemoMode || !currentUser || !hasPasswordProvider || emailVerifiedFlag;
+
+  // Presence heartbeat for live online / last-seen dot (only once profile exists & verified)
   useEffect(() => {
-    if (isDemoMode || !userProfile?.uid || !userProfile.usernameLower) return;
+    if (isDemoMode || !userProfile?.uid || !userProfile.usernameLower || !isEmailVerified) return;
     const show = userProfile.showOnlineStatus !== false;
     updateUserPresence(userProfile.uid, show, show);
 
@@ -244,7 +258,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       clearInterval(interval);
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
-  }, [userProfile?.uid, userProfile?.usernameLower, userProfile?.showOnlineStatus, isDemoMode]);
+  }, [userProfile?.uid, userProfile?.usernameLower, userProfile?.showOnlineStatus, isDemoMode, isEmailVerified]);
 
   const mapAuthError = (err: any): string => {
     const code = err?.code || '';
@@ -291,7 +305,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsDemoMode(false);
       await signInWithEmailAndPassword(auth, email.trim(), password);
     } catch (err: any) {
-      const msg = mapAuthError(err);
+      let msg = mapAuthError(err);
+      if (
+        err?.code === 'auth/invalid-credential' ||
+        err?.code === 'auth/wrong-password' ||
+        err?.code === 'auth/user-not-found'
+      ) {
+        const methods = await fetchSignInMethodsForEmail(auth, email.trim()).catch(
+          (): string[] => []
+        );
+        if (methods.includes('google.com') && !methods.includes('password')) {
+          msg = 'This email is registered with Google Sign-In. Click "Continue with Google" above.';
+        }
+      }
       setError(msg);
       throw new Error(msg);
     }
@@ -384,15 +410,49 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         newUsernameLower: usernameLower,
         profileCreatePayload: profile,
       });
+      await sendEmailVerification(cred.user).catch((err) => {
+        console.warn('Initial verification email error:', err);
+      });
+      setEmailVerifiedFlag(Boolean(cred.user.emailVerified));
       setIsLegacyStep1Only(false);
       setUserProfile({ ...profile, email: cred.user.email || params.email.trim() });
     } catch (err: any) {
-      const msg = mapAuthError(err);
+      let msg = mapAuthError(err);
+      if (err?.code === 'auth/email-already-in-use') {
+        const methods = await fetchSignInMethodsForEmail(auth, params.email.trim()).catch(
+          (): string[] => []
+        );
+        if (methods.includes('google.com') && !methods.includes('password')) {
+          msg = 'This email is registered with Google Sign-In. Click "Continue with Google" above.';
+        }
+      }
       setError(msg);
       throw new Error(msg);
     } finally {
       pendingSignupRef.current = null;
     }
+  };
+
+  const resendVerificationEmail = async () => {
+    if (!auth.currentUser) throw new Error('You must be signed in.');
+    try {
+      await reload(auth.currentUser);
+      if (auth.currentUser.emailVerified) {
+        setEmailVerifiedFlag(true);
+        return;
+      }
+      await sendEmailVerification(auth.currentUser);
+    } catch (err: any) {
+      throw new Error(mapAuthError(err));
+    }
+  };
+
+  const refreshAuthUser = async (): Promise<boolean> => {
+    if (!auth.currentUser) return false;
+    await reload(auth.currentUser);
+    const verified = Boolean(auth.currentUser.emailVerified);
+    setEmailVerifiedFlag(verified);
+    return verified;
   };
 
   const saveOnboardingStep1: AuthContextType['saveOnboardingStep1'] = async (params) => {
@@ -662,12 +722,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         userProfile,
         loading,
         isDemoMode,
+        isEmailVerified,
         needsOnboarding,
         isLegacyStep1Only,
         inviteUsername,
         clearInviteUsername,
         error,
         clearError,
+        resendVerificationEmail,
+        refreshAuthUser,
         signIn,
         signInWithGoogle,
         signUp,

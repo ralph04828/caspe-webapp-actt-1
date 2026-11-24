@@ -31,6 +31,7 @@ interface SidebarProps {
   onCloseMobile: () => void;
   onOpenCreatePost: (initialType?: PostType) => void;
   onOpenCreateMyDay: () => void;
+  hideMobileBottomNav?: boolean;
 }
 
 const NAV_ITEMS: { id: NavSection; label: string; icon: React.FC<{ className?: string }> }[] = [
@@ -56,6 +57,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onCloseMobile,
   onOpenCreatePost,
   onOpenCreateMyDay,
+  hideMobileBottomNav = false,
 }) => {
   const { userProfile, isDemoMode, signOutUser } = useAuth();
   const { unreadNotificationsCount, incomingFriendRequests, unreadMessagesCount } = useSocial();
@@ -283,70 +285,72 @@ export const Sidebar: React.FC<SidebarProps> = ({
       )}
 
       {/* Mobile Floating Rounded Bottom Tab Bar */}
-      <nav
-        aria-label="Mobile quick navigation"
-        className="lg:hidden fixed bottom-3 left-3 right-3 z-40 rounded-modal mica-surface border border-[#d4cfc5] dark:border-[#404040] shadow-xl px-1.5 py-1.5 flex items-center justify-around"
-      >
-        {[
-          { id: 'home' as NavSection, label: 'Home', Icon: Home },
-          { id: 'ootd' as NavSection, label: 'OOTD', Icon: Camera },
-        ].map(({ id, label, Icon }) => (
+      {!hideMobileBottomNav && (
+        <nav
+          aria-label="Mobile quick navigation"
+          className="lg:hidden fixed bottom-3 left-3 right-3 z-40 rounded-modal mica-surface border border-[#d4cfc5] dark:border-[#404040] shadow-xl px-1.5 py-1.5 flex items-center justify-around"
+        >
+          {[
+            { id: 'home' as NavSection, label: 'Home', Icon: Home },
+            { id: 'ootd' as NavSection, label: 'OOTD', Icon: Camera },
+          ].map(({ id, label, Icon }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => onSelectSection(id)}
+              aria-label={label}
+              className={`min-w-[44px] min-h-[44px] px-2.5 rounded-control flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium cursor-pointer transition-colors ${
+                activeSection === id
+                  ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717]'
+                  : 'text-[#4e4c46] dark:text-[#c2bfb8]'
+              }`}
+            >
+              <Icon className="w-4 h-4" />
+              <span>{label}</span>
+            </button>
+          ))}
+
           <button
-            key={id}
             type="button"
-            onClick={() => onSelectSection(id)}
-            aria-label={label}
-            className={`min-w-[44px] min-h-[44px] px-2.5 rounded-control flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium cursor-pointer transition-colors ${
-              activeSection === id
+            onClick={() => onOpenCreatePost('outfit')}
+            aria-label="Create post"
+            className="min-w-[48px] min-h-[44px] px-3.5 rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] flex items-center justify-center shadow-md cursor-pointer"
+          >
+            <PlusSquare className="w-5 h-5" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onSelectSection('messages')}
+            aria-label="Messages"
+            className={`relative min-w-[44px] min-h-[44px] px-2.5 rounded-control flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium cursor-pointer transition-colors ${
+              activeSection === 'messages'
                 ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717]'
                 : 'text-[#4e4c46] dark:text-[#c2bfb8]'
             }`}
           >
-            <Icon className="w-4 h-4" />
-            <span>{label}</span>
+            <MessageCircle className="w-4 h-4" />
+            <span>Chat</span>
+            {unreadMessagesCount > 0 && (
+              <span className="absolute top-1.5 right-2 w-2 h-2 rounded-full bg-red-500" />
+            )}
           </button>
-        ))}
 
-        <button
-          type="button"
-          onClick={() => onOpenCreatePost('outfit')}
-          aria-label="Create post"
-          className="min-w-[48px] min-h-[44px] px-3.5 rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] flex items-center justify-center shadow-md cursor-pointer"
-        >
-          <PlusSquare className="w-5 h-5" />
-        </button>
-
-        <button
-          type="button"
-          onClick={() => onSelectSection('messages')}
-          aria-label="Messages"
-          className={`relative min-w-[44px] min-h-[44px] px-2.5 rounded-control flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium cursor-pointer transition-colors ${
-            activeSection === 'messages'
-              ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717]'
-              : 'text-[#4e4c46] dark:text-[#c2bfb8]'
-          }`}
-        >
-          <MessageCircle className="w-4 h-4" />
-          <span>Chat</span>
-          {unreadMessagesCount > 0 && (
-            <span className="absolute top-1.5 right-2 w-2 h-2 rounded-full bg-red-500" />
-          )}
-        </button>
-
-        <button
-          type="button"
-          onClick={() => onSelectSection('profile')}
-          aria-label="Profile"
-          className={`relative min-w-[44px] min-h-[44px] px-2.5 rounded-control flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium cursor-pointer transition-colors ${
-            activeSection === 'profile'
-              ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717]'
-              : 'text-[#4e4c46] dark:text-[#c2bfb8]'
-          }`}
-        >
-          <User className="w-4 h-4" />
-          <span>Profile</span>
-        </button>
-      </nav>
+          <button
+            type="button"
+            onClick={() => onSelectSection('profile')}
+            aria-label="Profile"
+            className={`relative min-w-[44px] min-h-[44px] px-2.5 rounded-control flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium cursor-pointer transition-colors ${
+              activeSection === 'profile'
+                ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717]'
+                : 'text-[#4e4c46] dark:text-[#c2bfb8]'
+            }`}
+          >
+            <User className="w-4 h-4" />
+            <span>Profile</span>
+          </button>
+        </nav>
+      )}
     </>
   );
 };

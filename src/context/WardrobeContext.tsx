@@ -39,6 +39,8 @@ import {
 } from '../services/firestoreService';
 import { deleteImageAsset, updateMediaVisibility } from '../services/storageService';
 import { cleanData } from '../utils/cleanData';
+import { getDefaultSizeForCategory, getSavedShoeSystem } from '../utils/sizing';
+import { getOutfitAllItemIds } from '../utils/outfitLayers';
 
 interface DemoStorageState {
   wardrobe: ClothingItem[];
@@ -478,12 +480,19 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     // Transfer ownership of mediaId to the new wardrobe garment so deleting the wishlist entry later never deletes the wardrobe photo
     await editWishlist(item.id, { status: 'got_it', mediaId: '' });
+    const targetCategory = (item.category as any) || 'Other';
+    const shoeSys = getSavedShoeSystem(userProfile?.uid);
+    const { size: defaultSizeVal, sizeSystem: defaultSizeSystem } = getDefaultSizeForCategory(
+      targetCategory,
+      shoeSys
+    );
     const created = await addClothing({
       name: item.name,
-      category: (item.category as any) || 'Other',
+      category: targetCategory,
       brand: item.brand,
       color: item.colorTags[0] || 'Neutral',
-      size: 'M',
+      size: defaultSizeVal,
+      ...(defaultSizeSystem ? { sizeSystem: defaultSizeSystem } : {}),
       seasons: ['All-Season'],
       styleTags: item.styleTags || [],
       description: item.notes,
@@ -537,13 +546,7 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const markScheduleWornToday = async (schedule: OutfitSchedule, outfit?: Outfit) => {
-    const ids: string[] = [];
-    if (outfit) {
-      if (outfit.topId) ids.push(outfit.topId);
-      if (outfit.bottomId) ids.push(outfit.bottomId);
-      if (outfit.shoesId) ids.push(outfit.shoesId);
-      if (outfit.accessoryIds) ids.push(...outfit.accessoryIds);
-    }
+    const ids = outfit ? getOutfitAllItemIds(outfit) : [];
     if (ids.length > 0) {
       await logWearForItems(ids, outfit?.id, schedule.date);
     }

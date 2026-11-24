@@ -71,6 +71,8 @@ export type FitVibeTag = (typeof FIT_VIBE_TAGS)[number];
 export const SEASON_TAGS = ['Spring', 'Summer', 'Fall', 'Winter', 'All-Season'] as const;
 export type SeasonTag = (typeof SEASON_TAGS)[number];
 
+export type SizeSystem = 'US' | 'EU' | 'UK' | 'CM' | 'Letter' | 'Waist' | 'Other';
+
 export interface WeatherLocation {
   name: string;
   lat: number;
@@ -98,6 +100,7 @@ export interface UserProfile {
   theme?: ThemeMode;
   stylePreference?: string;
   styleTags: string[];
+  customStyles?: string[];
   isPublic: boolean;
   defaultItemVisibility: Visibility;
   defaultOutfitVisibility: Visibility;
@@ -153,6 +156,7 @@ export interface ClothingItem {
   brand: string;
   color: string;
   size: string;
+  sizeSystem?: SizeSystem;
   seasons: SeasonTag[];
   styleTags: string[];
   description?: string;
@@ -172,6 +176,8 @@ export interface ClothingItem {
 export interface OutfitPieceSnapshot {
   id: string;
   slot: 'top' | 'bottom' | 'shoes' | 'accessory';
+  layerLabel?: string;
+  layerIndex?: number;
   name: string;
   category: string;
   brand: string;
@@ -193,6 +199,7 @@ export interface Outfit {
   tags: string[];
   description?: string;
   topId?: string;
+  topIds?: string[];
   bottomId?: string;
   shoesId?: string;
   accessoryIds?: string[];
@@ -223,6 +230,7 @@ export interface SocialPost {
   authorUsername: string;
   authorPhotoUrl?: string;
   postType: PostType;
+  title?: string;
   caption: string;
   hashtags: string[];
   mentions: string[];
@@ -540,4 +548,31 @@ export interface WeatherForecast {
     precipitationProb: number;
   }[];
   fetchedAt: string;
+}
+
+export type CallType = 'voice' | 'video';
+
+export type CallStatus = 'ringing' | 'active' | 'ended' | 'declined' | 'missed';
+
+export interface CallSession {
+  id: string;
+  conversationId: string;
+  callerId: string;
+  callerName: string;
+  callerUsername: string;
+  callerPhotoUrl?: string;
+  calleeId: string;
+  calleeName: string;
+  calleeUsername: string;
+  calleePhotoUrl?: string;
+  callType: CallType;
+  status: CallStatus;
+  participants: [string, string];
+  offerSdp?: string;
+  answerSdp?: string;
+  createdAt: string;
+  answeredAt?: string;
+  endedAt?: string;
+  endedBy?: string;
+  durationSeconds?: number;
 }

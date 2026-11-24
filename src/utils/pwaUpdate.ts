@@ -49,6 +49,7 @@ export async function applyPwaUpdate(): Promise<void> {
 export function initPwaUpdater(): void {
   if (initialized) return;
   initialized = true;
+  if (!import.meta.env.PROD) return;
   if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
 
   const hadController = Boolean(navigator.serviceWorker.controller);

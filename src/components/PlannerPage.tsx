@@ -9,6 +9,7 @@ import {
   searchCities,
 } from '../services/weatherService';
 import { formatShortDate } from '../utils/formatters';
+import { getOutfitAllItemIds } from '../utils/outfitLayers';
 import { getTodayISO } from '../data/demoData';
 import {
   AlertTriangle,
@@ -88,12 +89,7 @@ export const PlannerPage: React.FC<PlannerPageProps> = ({
 
   const dirtyPiecesInActiveOutfit = useMemo(() => {
     if (!activeOutfit) return [];
-    const ids = [
-      activeOutfit.topId,
-      activeOutfit.bottomId,
-      activeOutfit.shoesId,
-      ...(activeOutfit.accessoryIds || []),
-    ].filter(Boolean);
+    const ids = getOutfitAllItemIds(activeOutfit);
     return wardrobe.filter((w) => ids.includes(w.id) && w.laundryStatus !== 'clean');
   }, [activeOutfit, wardrobe]);
 

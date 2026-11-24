@@ -3,6 +3,7 @@ import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { WardrobeProvider } from './context/WardrobeContext';
 import { SocialContextProvider, useSocial } from './context/SocialContext';
+import { CallContextProvider } from './context/CallContext';
 import { AuthPage } from './components/AuthPage';
 import { JoinInvitePage } from './components/JoinInvitePage';
 import { OnboardingFlow } from './components/OnboardingModal';
@@ -27,6 +28,7 @@ import { MyDayViewerModal } from './components/MyDayViewerModal';
 import { MyDayUserGroup } from './components/MyDayBar';
 import { SharedLookbookView } from './components/SharedLookbookView';
 import { PostDetailModal } from './components/PostDetailModal';
+import { CallOverlayModal } from './components/CallOverlayModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { getPostByIdFirestore } from './services/firestoreService';
 import {
@@ -39,7 +41,7 @@ import {
 import { loadIdbDraft } from './utils/indexedDbDrafts';
 import { applyPwaUpdate, dismissPwaUpdate, subscribePwaUpdate } from './utils/pwaUpdate';
 import { ClothingItem, NavSection, Outfit, SocialPost, UserProfile } from './types';
-import { CheckCircle2, AlertCircle, RefreshCw, X } from 'lucide-react';
+import { CheckCircle2, AlertCircle, RefreshCw, X, MailCheck, LogOut } from 'lucide-react';
 
 const VALID_NAV_SECTIONS: NavSection[] = [
   'home',
@@ -57,8 +59,127 @@ const VALID_NAV_SECTIONS: NavSection[] = [
   'settings',
 ];
 
+const VerifyEmailGate: React.FC = () => {
+  const { userProfile, resendVerificationEmail, refreshAuthUser, signOutUser } = useAuth();
+  const [cooldown, setCooldown] = useState(0);
+  const [checking, setChecking] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  const [errMsg, setErrMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const t = window.setInterval(() => {
+      setCooldown((c) => Math.max(0, c - 1));
+    }, 1000);
+    return () => window.clearInterval(t);
+  }, [cooldown]);
+
+  const handleCheck = async () => {
+    setChecking(true);
+    setErrMsg(null);
+    setStatusMsg(null);
+    try {
+      const verified = await refreshAuthUser();
+      if (!verified) {
+        setErrMsg('Not verified yet. Click the link in your inbox (or spam folder), then tap check again.');
+      }
+    } catch (err: any) {
+      setErrMsg(err?.message || 'Could not refresh verification status.');
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const handleResend = async () => {
+    if (cooldown > 0) return;
+    setResending(true);
+    setErrMsg(null);
+    setStatusMsg(null);
+    try {
+      await resendVerificationEmail();
+      setCooldown(45);
+      setStatusMsg('Verification email sent! Check your inbox and spam folder.');
+    } catch (err: any) {
+      setErrMsg(err?.message || 'Could not send verification email.');
+    } finally {
+      setResending(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-[#f5f4f0] dark:bg-[#171717] text-[#171717] dark:text-[#e5e1da] flex items-center justify-center p-6">
+      <div className="w-full max-w-md rounded-modal border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] p-7 space-y-5 shadow-xl">
+        <div className="w-12 h-12 rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] flex items-center justify-center">
+          <MailCheck className="w-6 h-6" />
+        </div>
+        <div className="space-y-1.5">
+          <p className="text-[11px] uppercase tracking-[0.2em] text-[#4e4c46] dark:text-[#c2bfb8]">
+            Verify Your Email
+          </p>
+          <h1 className="font-display text-2xl font-bold">Check your inbox</h1>
+          <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8] leading-relaxed">
+            We sent a verification link to{' '}
+            <strong className="text-[#171717] dark:text-[#e5e1da]">
+              {userProfile?.email || 'your email'}
+            </strong>
+            . Click the link (check spam/junk if missing), then tap below to enter SWOOOSH.
+          </p>
+        </div>
+
+        {errMsg && (
+          <div
+            role="alert"
+            className="p-3 rounded-control border border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300 text-xs"
+          >
+            {errMsg}
+          </div>
+        )}
+        {statusMsg && (
+          <div className="p-3 rounded-control border border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 text-xs">
+            {statusMsg}
+          </div>
+        )}
+
+        <div className="space-y-2.5">
+          <button
+            type="button"
+            onClick={handleCheck}
+            disabled={checking}
+            className="w-full py-3 min-h-[44px] rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-semibold hover:opacity-90 cursor-pointer disabled:opacity-50"
+          >
+            {checking ? 'Checking...' : "I've verified my email"}
+          </button>
+
+          <button
+            type="button"
+            onClick={handleResend}
+            disabled={resending || cooldown > 0}
+            className="w-full py-2.5 min-h-[42px] rounded-full border border-[#d4cfc5] dark:border-[#404040] text-xs font-semibold hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer disabled:opacity-50"
+          >
+            {resending
+              ? 'Sending...'
+              : cooldown > 0
+              ? `Resend email in ${cooldown}s`
+              : 'Resend verification email'}
+          </button>
+
+          <button
+            type="button"
+            onClick={signOutUser}
+            className="w-full py-2 text-xs text-[#4e4c46] dark:text-[#c2bfb8] hover:underline flex items-center justify-center gap-1.5 cursor-pointer"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span>Sign out</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const MainShell: React.FC = () => {
-  const { userProfile, loading, needsOnboarding, inviteUsername, isDemoMode } = useAuth();
+  const { userProfile, loading, needsOnboarding, isEmailVerified, inviteUsername, isDemoMode } = useAuth();
   const {
     storiesForFeed,
     startDmWithFriend,
@@ -72,15 +193,27 @@ const MainShell: React.FC = () => {
     return new URLSearchParams(window.location.search).get('share');
   });
 
+  const initialChatRouteConvId =
+    typeof window !== 'undefined'
+      ? window.location.pathname.match(/^\/chat\/([a-zA-Z0-9_-]+)/)?.[1] || null
+      : null;
+  const isInitialChatRoute =
+    typeof window !== 'undefined' && window.location.pathname.startsWith('/chat');
+
   const [showStandardAuth, setShowStandardAuth] = useState(false);
-  const [activeSection, setActiveSection] = useState<NavSection>('home');
+  const [activeSection, setActiveSection] = useState<NavSection>(
+    isInitialChatRoute ? 'messages' : 'home'
+  );
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [openAddClothing, setOpenAddClothing] = useState(false);
   const [wardrobeModalOpen, setWardrobeModalOpen] = useState(false);
   const [editingOutfit, setEditingOutfit] = useState<Outfit | null>(null);
   const [remixPost, setRemixPost] = useState<SocialPost | null>(null);
   const [viewingUserId, setViewingUserId] = useState<string | null>(null);
-  const [initialConversationId, setInitialConversationId] = useState<string | null>(null);
+  const [initialConversationId, setInitialConversationId] = useState<string | null>(
+    initialChatRouteConvId
+  );
+  const [activeChatConvId, setActiveChatConvId] = useState<string | null>(initialChatRouteConvId);
 
   const [createPostOpen, setCreatePostOpen] = useState(false);
   const [createInitialOutfitId, setCreateInitialOutfitId] = useState<string | undefined>();
@@ -157,11 +290,21 @@ const MainShell: React.FC = () => {
   };
 
   useEffect(() => {
-    if (!userProfile || needsOnboarding) return;
+    if (!userProfile || needsOnboarding || !isEmailVerified) return;
     const checkPath = () => {
-      const match = window.location.pathname.match(/^\/post\/([a-zA-Z0-9_-]+)/);
-      if (match?.[1]) {
-        openPostById(match[1], { openComments: true });
+      const postMatch = window.location.pathname.match(/^\/post\/([a-zA-Z0-9_-]+)/);
+      if (postMatch?.[1]) {
+        openPostById(postMatch[1], { openComments: true });
+      }
+      if (window.location.pathname.startsWith('/chat')) {
+        const chatMatch = window.location.pathname.match(/^\/chat\/([a-zA-Z0-9_-]+)/);
+        setActiveSection('messages');
+        if (chatMatch?.[1]) {
+          setInitialConversationId(chatMatch[1]);
+          setActiveChatConvId(chatMatch[1]);
+        } else {
+          setActiveChatConvId(null);
+        }
       }
     };
     if (!handledInitialPostPathRef.current) {
@@ -170,7 +313,14 @@ const MainShell: React.FC = () => {
     }
     window.addEventListener('popstate', checkPath);
     return () => window.removeEventListener('popstate', checkPath);
-  }, [userProfile?.uid, needsOnboarding, myPosts.length, visibleFriendsPosts.length, visiblePostsForFeed.length]);
+  }, [
+    userProfile?.uid,
+    needsOnboarding,
+    isEmailVerified,
+    myPosts.length,
+    visibleFriendsPosts.length,
+    visiblePostsForFeed.length,
+  ]);
 
   // Restore last active section / open modal / unsaved draft after mobile picker or tab reload
   useEffect(() => {
@@ -205,7 +355,9 @@ const MainShell: React.FC = () => {
         ((Array.isArray(ootdDraft.photos) && ootdDraft.photos.length > 0) || ootdDraft.caption?.trim())
     );
 
-    if (savedNav && VALID_NAV_SECTIONS.includes(savedNav.activeSection)) {
+    if (isInitialChatRoute) {
+      setActiveSection('messages');
+    } else if (savedNav && VALID_NAV_SECTIONS.includes(savedNav.activeSection)) {
       setActiveSection(savedNav.activeSection);
       setViewingUserId(savedNav.viewingUserId || null);
     } else if (hasWardrobeDraft) {
@@ -352,6 +504,10 @@ const MainShell: React.FC = () => {
     return <AuthPage />;
   }
 
+  if (!isEmailVerified) {
+    return <VerifyEmailGate />;
+  }
+
   if (needsOnboarding) {
     return (
       <OnboardingFlow
@@ -364,6 +520,12 @@ const MainShell: React.FC = () => {
   const navigateToSection = (sec: NavSection) => {
     if (sec !== 'wardrobe') {
       setWardrobeModalOpen(false);
+    }
+    if (sec !== 'messages') {
+      setActiveChatConvId(null);
+      if (window.location.pathname.startsWith('/chat')) {
+        window.history.pushState({}, '', '/');
+      }
     }
     if (sec === 'profile') setViewingUserId(null);
     setActiveSection(sec);
@@ -434,6 +596,8 @@ const MainShell: React.FC = () => {
     setCreatePostOpen(true);
   };
 
+  const isMobileActiveChat = activeSection === 'messages' && Boolean(activeChatConvId);
+
   return (
     <div className="min-h-screen bg-[#f5f4f0] dark:bg-[#171717] text-[#171717] dark:text-[#e5e1da] flex">
       <a href="#main-content" className="skip-link">
@@ -445,6 +609,7 @@ const MainShell: React.FC = () => {
         onSelectSection={navigateToSection}
         mobileOpen={mobileMenuOpen}
         onCloseMobile={() => setMobileMenuOpen(false)}
+        hideMobileBottomNav={isMobileActiveChat}
         onOpenCreatePost={(initialType) => {
           setPlannedShare(null);
           setCreateInitialOutfitId(undefined);
@@ -459,16 +624,22 @@ const MainShell: React.FC = () => {
       />
 
       <div className="flex-1 flex flex-col min-w-0">
-        <HeaderBar
-          activeSection={activeSection}
-          onOpenMobileMenu={() => setMobileMenuOpen(true)}
-          onNavigate={navigateToSection}
-          onOpenCreatePost={openBlankCreatePost}
-        />
+        <div className={isMobileActiveChat ? 'hidden lg:block' : ''}>
+          <HeaderBar
+            activeSection={activeSection}
+            onOpenMobileMenu={() => setMobileMenuOpen(true)}
+            onNavigate={navigateToSection}
+            onOpenCreatePost={openBlankCreatePost}
+          />
+        </div>
 
         <main
           id="main-content"
-          className="flex-1 px-4 sm:px-6 lg:px-8 pt-6 pb-24 lg:pb-10 max-w-[1400px] w-full mx-auto"
+          className={
+            isMobileActiveChat
+              ? 'flex-1 p-0 lg:px-8 lg:pt-6 lg:pb-10 max-w-[1400px] w-full mx-auto flex flex-col min-h-0'
+              : 'flex-1 px-4 sm:px-6 lg:px-8 pt-6 pb-24 lg:pb-10 max-w-[1400px] w-full mx-auto'
+          }
         >
           <ErrorBoundary title="This section ran into an unexpected error">
             {activeSection === 'home' && (
@@ -506,6 +677,7 @@ const MainShell: React.FC = () => {
               <MessagesPage
                 initialConversationId={initialConversationId}
                 onClearInitialConversation={() => setInitialConversationId(null)}
+                onActiveConversationChange={setActiveChatConvId}
                 onOpenProfile={handleOpenProfile}
                 onNavigatePeople={() => navigateToSection('people')}
               />
@@ -682,6 +854,8 @@ const MainShell: React.FC = () => {
         </div>
       )}
 
+      <CallOverlayModal />
+
       {toast && (
         <div
           role="status"
@@ -711,7 +885,9 @@ export default function App() {
         <AuthProvider>
           <WardrobeProvider>
             <SocialContextProvider>
-              <MainShell />
+              <CallContextProvider>
+                <MainShell />
+              </CallContextProvider>
             </SocialContextProvider>
           </WardrobeProvider>
         </AuthProvider>

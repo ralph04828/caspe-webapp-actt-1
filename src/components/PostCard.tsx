@@ -5,6 +5,7 @@ import { useSocial } from '../context/SocialContext';
 import { preparePreviewDataUrl, uploadImageAsset } from '../services/storageService';
 import { formatRelativeTime } from '../utils/formatters';
 import { resolveDisplayAspectRatio } from '../utils/aspectRatio';
+import { dedupeStyleTags } from '../utils/styleTags';
 import { AvatarImage } from './AvatarImage';
 import { GarmentImage } from './GarmentImage';
 import { PhotoPickerButton } from './PhotoPickerButton';
@@ -219,7 +220,13 @@ export const PostCard: React.FC<PostCardProps> = ({
 
   const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editCaption.trim()) return;
+    const hasVisualOrTitle = Boolean(
+      post.title?.trim() || mediaUrls.length > 0 || (post.piecesPreview?.length || 0) > 0
+    );
+    if (!editCaption.trim() && !hasVisualOrTitle) {
+      onToast('Add a caption before saving this text-only post.', 'error');
+      return;
+    }
     setSavingEdit(true);
     try {
       await editPost(post, { caption: editCaption, visibility: editVisibility });
@@ -525,6 +532,11 @@ export const PostCard: React.FC<PostCardProps> = ({
                 )}
               </div>
               <div className="min-w-0 max-w-[140px]">
+                {piece.layerLabel && (
+                  <span className="block text-[9px] font-mono-num uppercase tracking-wider text-[#4e4c46] dark:text-[#b0b0b0] leading-tight truncate">
+                    {piece.layerLabel}
+                  </span>
+                )}
                 <p className="text-[11px] font-semibold truncate">
                   {piece.isPrivatePlaceholder ? 'Private piece' : piece.name}
                 </p>
@@ -579,21 +591,32 @@ export const PostCard: React.FC<PostCardProps> = ({
             </div>
           </form>
         ) : (
-          <p className="text-sm leading-relaxed">{renderCaption(post.caption || '')}</p>
+          <>
+            {post.title && (
+              <h3 className="font-display font-bold text-base leading-snug">{post.title}</h3>
+            )}
+            {Boolean(post.caption?.trim()) && (
+              <p className="text-sm leading-relaxed">{renderCaption(post.caption)}</p>
+            )}
+          </>
         )}
 
-        {(post.styleTags || []).length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {(post.styleTags || []).map((tag) => (
-              <span
-                key={tag}
-                className="px-2 py-0.5 rounded-chip text-[11px] font-medium bg-[#eae7e0] dark:bg-[#303030] text-[#171717] dark:text-[#e5e1da]"
-              >
-                {tag}
-              </span>
-            ))}
-          </div>
-        )}
+        {(() => {
+          const cleanTags = dedupeStyleTags(post.styleTags || []);
+          if (cleanTags.length === 0) return null;
+          return (
+            <div className="flex flex-wrap gap-1.5">
+              {cleanTags.map((tag) => (
+                <span
+                  key={tag.toLowerCase()}
+                  className="px-2 py-0.5 rounded-chip text-[11px] font-medium bg-[#eae7e0] dark:bg-[#303030] text-[#171717] dark:text-[#e5e1da]"
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+          );
+        })()}
       </div>
 
       {/* Action Bar */}

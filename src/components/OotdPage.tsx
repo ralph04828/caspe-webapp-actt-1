@@ -3,7 +3,6 @@ import {
   CommentPolicy,
   NavSection,
   SEASON_TAGS,
-  STYLE_CATEGORIES,
   SeasonTag,
   SocialPost,
   Visibility,
@@ -23,10 +22,12 @@ import {
   saveSessionJson,
 } from '../utils/draftStorage';
 import { loadIdbDraft, removeIdbDraft, saveIdbDraft } from '../utils/indexedDbDrafts';
+import { dedupeStyleTags } from '../utils/styleTags';
 import { GarmentImage } from './GarmentImage';
 import { PostCard } from './PostCard';
 import { PhotoCropState, PhotoEditorModal, createDefaultCropState } from './PhotoEditorModal';
 import { PhotoPickerButton } from './PhotoPickerButton';
+import { StyleTagSelector } from './StyleTagSelector';
 import { ErrorBoundary } from './ErrorBoundary';
 import {
   AlertCircle,
@@ -198,12 +199,6 @@ export const OotdPage: React.FC<OotdPageProps> = ({
       onToast(msg, 'error');
       return;
     }
-    if (!caption.trim()) {
-      const msg = 'Write a quick caption for your Outfit of the Day.';
-      setFormError(msg);
-      onToast(msg, 'error');
-      return;
-    }
 
     setSubmitting(true);
     try {
@@ -220,7 +215,7 @@ export const OotdPage: React.FC<OotdPageProps> = ({
         mediaUrls.push(uploaded.imageUrl);
         thumbUrls.push(uploaded.thumbUrl);
         mediaIds.push(uploaded.mediaId);
-        altTexts.push(p.alt.trim() || caption.trim().slice(0, 100));
+        altTexts.push(p.alt.trim() || caption.trim().slice(0, 100) || 'Outfit of the Day photo');
         mediaDimensions.push({ width: uploaded.width, height: uploaded.height });
         if (!primaryAspectRatio) {
           primaryAspectRatio =
@@ -255,7 +250,11 @@ export const OotdPage: React.FC<OotdPageProps> = ({
         height: mediaDimensions[0]?.height,
         mediaDimensions,
         seasons,
-        styleTags: styleTags.length ? styleTags : ['Streetwear'],
+        styleTags: dedupeStyleTags(
+          styleTags.length ? styleTags : ['Streetwear'],
+          userProfile.customStyles,
+          5
+        ),
       });
 
       removeSessionKey(draftKey);
@@ -389,14 +388,13 @@ export const OotdPage: React.FC<OotdPageProps> = ({
 
             <div>
               <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1">
-                Caption (#hashtags &amp; @mentions) *
+                Caption (Optional — #hashtags &amp; @mentions)
               </label>
               <textarea
                 rows={3}
-                required
                 value={caption}
                 onChange={(e) => setCaption(e.target.value)}
-                placeholder="Heavyweight boxy layers for studio day. #ootd #streetwear"
+                placeholder="Optional caption or #hashtags..."
                 className="w-full px-3.5 py-2.5 rounded-control text-sm bg-[#f5f4f0] dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
               />
             </div>
@@ -419,34 +417,15 @@ export const OotdPage: React.FC<OotdPageProps> = ({
               </select>
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1.5">
-                Style Tags
-              </label>
-              <div className="flex flex-wrap gap-1.5">
-                {STYLE_CATEGORIES.map((tag) => {
-                  const active = styleTags.includes(tag);
-                  return (
-                    <button
-                      key={tag}
-                      type="button"
-                      onClick={() =>
-                        setStyleTags((prev) =>
-                          prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]
-                        )
-                      }
-                      className={`px-2.5 py-1 rounded-chip text-[11px] border cursor-pointer ${
-                        active
-                          ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-transparent'
-                          : 'border-[#d4cfc5] dark:border-[#404040]'
-                      }`}
-                    >
-                      {tag}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+            <StyleTagSelector
+              label="Style Tags"
+              selected={styleTags}
+              onChange={setStyleTags}
+              onError={(msg) => {
+                setFormError(msg);
+                onToast(msg, 'error');
+              }}
+            />
 
             <div>
               <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1.5">

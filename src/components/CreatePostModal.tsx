@@ -16,9 +16,12 @@ import {
   saveSessionJson,
 } from '../utils/draftStorage';
 import { loadIdbDraft, removeIdbDraft, saveIdbDraft } from '../utils/indexedDbDrafts';
+import { getOutfitAccessoryIds, getOutfitTopIds, getTopLayerLabels } from '../utils/outfitLayers';
+import { dedupeStyleTags } from '../utils/styleTags';
 import { GarmentImage } from './GarmentImage';
 import { PhotoCropState, PhotoEditorModal, createDefaultCropState } from './PhotoEditorModal';
 import { PhotoPickerButton } from './PhotoPickerButton';
+import { StyleTagSelector } from './StyleTagSelector';
 import { DiscardDraftDialog } from './DiscardDraftDialog';
 import { ErrorBoundary } from './ErrorBoundary';
 import {
@@ -50,8 +53,10 @@ interface CreatePostDraft {
   postType: PostType;
   selectedOutfitId: string;
   selectedItemId: string;
+  title?: string;
   caption: string;
   occasion: string;
+  styleTags?: string[];
   visibility: Visibility;
   allowRemix: boolean;
   commentPolicy: CommentPolicy;
@@ -92,8 +97,10 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
     initialPlannedOutfit?.outfit.id || initialOutfitId || outfits[0]?.id || ''
   );
   const [selectedItemId, setSelectedItemId] = useState(initialItemId || wardrobe[0]?.id || '');
+  const [title, setTitle] = useState('');
   const [caption, setCaption] = useState('');
   const [occasion, setOccasion] = useState('');
+  const [styleTags, setStyleTags] = useState<string[]>(['Streetwear']);
   const [visibility, setVisibility] = useState<Visibility>(userProfile?.defaultOutfitVisibility || 'public');
   const [allowRemix, setAllowRemix] = useState(true);
   const [commentPolicy, setCommentPolicy] = useState<CommentPolicy>('everyone');
@@ -117,8 +124,10 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
     setPostType('outfit');
     setSelectedOutfitId(outfits[0]?.id || '');
     setSelectedItemId(wardrobe[0]?.id || '');
+    setTitle('');
     setCaption('');
     setOccasion('');
+    setStyleTags(['Streetwear']);
     setVisibility(userProfile?.defaultOutfitVisibility || 'public');
     setAllowRemix(true);
     setCommentPolicy('everyone');
@@ -137,17 +146,42 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
       setPostType('outfit');
       setSelectedOutfitId(initialPlannedOutfit.outfit.id);
       setIsPlannedCopy(true);
-      setCaption(
-        `Fit lined up for ${initialPlannedOutfit.date}: ${initialPlannedOutfit.outfit.name} #fitcheck`
-      );
+      setTitle(initialPlannedOutfit.outfit.name);
+      setCaption('');
       setOccasion(initialPlannedOutfit.outfit.occasion || '');
+      setStyleTags(
+        dedupeStyleTags(
+          [initialPlannedOutfit.outfit.styleCategory, ...(initialPlannedOutfit.outfit.tags || [])],
+          userProfile?.customStyles,
+          5
+        )
+      );
     } else if (initialOutfitId) {
+      const targetOutfit = outfits.find((o) => o.id === initialOutfitId);
       setPostType('outfit');
       setSelectedOutfitId(initialOutfitId);
+      setTitle(targetOutfit?.name || '');
+      setCaption('');
+      if (targetOutfit) {
+        setOccasion(targetOutfit.occasion || '');
+        setStyleTags(
+          dedupeStyleTags(
+            [targetOutfit.styleCategory, ...(targetOutfit.tags || [])],
+            userProfile?.customStyles,
+            5
+          )
+        );
+      }
       setIsPlannedCopy(false);
     } else if (initialItemId) {
+      const targetItem = wardrobe.find((w) => w.id === initialItemId);
       setPostType('piece');
       setSelectedItemId(initialItemId);
+      setTitle(targetItem?.name || '');
+      setCaption('');
+      if (targetItem?.styleTags?.length) {
+        setStyleTags(dedupeStyleTags(targetItem.styleTags, userProfile?.customStyles, 5));
+      }
       setIsPlannedCopy(false);
     } else {
       setIsPlannedCopy(false);
@@ -155,14 +189,21 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
         if (!saved) return false;
         const hasData =
           (Array.isArray(saved.photos) && saved.photos.length > 0) ||
+          Boolean(saved.title?.trim()) ||
           Boolean(saved.caption?.trim()) ||
           Boolean(saved.occasion?.trim());
         if (!hasData) return false;
         setPostType(saved.postType || 'outfit');
         setSelectedOutfitId(saved.selectedOutfitId || outfits[0]?.id || '');
         setSelectedItemId(saved.selectedItemId || wardrobe[0]?.id || '');
+        setTitle(saved.title || '');
         setCaption(saved.caption || '');
         setOccasion(saved.occasion || '');
+        setStyleTags(
+          saved.styleTags?.length
+            ? dedupeStyleTags(saved.styleTags, userProfile?.customStyles, 5)
+            : ['Streetwear']
+        );
         setVisibility(saved.visibility || userProfile?.defaultOutfitVisibility || 'public');
         setAllowRemix(saved.allowRemix !== false);
         setCommentPolicy(saved.commentPolicy || 'everyone');
@@ -197,14 +238,16 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
       postType,
       selectedOutfitId,
       selectedItemId,
+      title,
       caption,
       occasion,
+      styleTags,
       visibility,
       allowRemix,
       commentPolicy,
       photos,
     };
-    const hasContent = Boolean(photos.length > 0 || caption.trim() || occasion.trim());
+    const hasContent = Boolean(photos.length > 0 || title.trim() || caption.trim() || occasion.trim());
     if (!hasContent) {
       removeSessionKey(draftKey);
       removeIdbDraft(draftKey);
@@ -224,8 +267,10 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
     postType,
     selectedOutfitId,
     selectedItemId,
+    title,
     caption,
     occasion,
+    styleTags,
     visibility,
     allowRemix,
     commentPolicy,
@@ -233,8 +278,8 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
   ]);
 
   const hasUnsavedDraft = useMemo(
-    () => Boolean(photos.length > 0 || caption.trim() || occasion.trim()),
-    [photos.length, caption, occasion]
+    () => Boolean(photos.length > 0 || title.trim() || caption.trim() || occasion.trim()),
+    [photos.length, title, caption, occasion]
   );
 
   const attemptClose = () => {
@@ -328,7 +373,12 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
 
   const buildIndependentPlannedSnapshot = (outfit: Outfit): OutfitPieceSnapshot[] => {
     const snaps: OutfitPieceSnapshot[] = [];
-    const pushSlot = (slot: OutfitPieceSnapshot['slot'], id?: string) => {
+    const pushSlot = (
+      slot: OutfitPieceSnapshot['slot'],
+      id?: string,
+      layerLabel?: string,
+      layerIndex?: number
+    ) => {
       if (!id) return;
       const item = wardrobe.find((w) => w.id === id);
       if (!item) return;
@@ -336,6 +386,8 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
       snaps.push({
         id: item.id,
         slot,
+        ...(layerLabel ? { layerLabel } : {}),
+        ...(layerIndex !== undefined ? { layerIndex } : {}),
         name: priv ? 'Private piece' : item.name,
         category: item.category,
         brand: priv ? '' : item.brand || '',
@@ -347,10 +399,12 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
         isPrivatePlaceholder: priv,
       });
     };
-    pushSlot('top', outfit.topId);
+    const topIds = getOutfitTopIds(outfit);
+    const layerLabels = getTopLayerLabels(topIds.length);
+    topIds.forEach((tid, idx) => pushSlot('top', tid, layerLabels[idx], idx));
     pushSlot('bottom', outfit.bottomId);
     pushSlot('shoes', outfit.shoesId);
-    (outfit.accessoryIds || []).forEach((aid) => pushSlot('accessory', aid));
+    getOutfitAccessoryIds(outfit).forEach((aid, idx) => pushSlot('accessory', aid, undefined, idx));
     return snaps;
   };
 
@@ -358,13 +412,6 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
     e.preventDefault();
     if (!userProfile || submitting) return;
     setError(null);
-
-    if (!caption.trim()) {
-      const msg = 'Add a caption or #hashtags to share your post.';
-      setError(msg);
-      onToast?.(msg, 'error');
-      return;
-    }
 
     const chosenOutfit =
       postType === 'outfit'
@@ -435,8 +482,19 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
       const plannedPieces =
         isPlannedCopy && chosenOutfit ? buildIndependentPlannedSnapshot(chosenOutfit) : undefined;
 
+      const resolvedStyleTags = dedupeStyleTags(
+        styleTags.length > 0
+          ? styleTags
+          : chosenOutfit
+          ? [chosenOutfit.styleCategory, ...(chosenOutfit.tags || [])]
+          : chosenItem?.styleTags || ['Streetwear'],
+        userProfile.customStyles,
+        5
+      );
+
       await publishPost({
         postType,
+        title: title.trim() || chosenOutfit?.name || undefined,
         caption,
         visibility,
         allowRemix,
@@ -460,9 +518,7 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
           ? uploadedList.map((u) => ({ width: u.width, height: u.height }))
           : undefined,
         occasion: occasion.trim() || undefined,
-        styleTags: chosenOutfit
-          ? [chosenOutfit.styleCategory, ...(chosenOutfit.tags || []).slice(0, 2)]
-          : chosenItem?.styleTags || ['Streetwear'],
+        styleTags: resolvedStyleTags,
       });
 
       removeSessionKey(draftKey);
@@ -697,17 +753,40 @@ export const CreatePostModal: React.FC<CreatePostModalProps> = ({
 
               <div>
                 <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1.5">
-                  Caption (#hashtags & @mentions supported)
+                  Title (Optional)
+                </label>
+                <input
+                  type="text"
+                  maxLength={120}
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="Give this fit or piece a name (optional)"
+                  className="w-full px-3 py-2 min-h-[42px] rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1.5">
+                  Caption (Optional — #hashtags &amp; @mentions supported)
                 </label>
                 <textarea
                   rows={3}
-                  required
                   value={caption}
                   onChange={(e) => setCaption(e.target.value)}
-                  placeholder="Rainy morning studio layers. #streetwear #monochrome"
+                  placeholder="Optional caption or #hashtags..."
                   className="w-full px-3.5 py-2.5 rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
                 />
               </div>
+
+              <StyleTagSelector
+                label="Style Tags"
+                selected={styleTags}
+                onChange={setStyleTags}
+                onError={(msg) => {
+                  setError(msg);
+                  onToast?.(msg, 'error');
+                }}
+              />
 
               <div>
                 <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1.5">

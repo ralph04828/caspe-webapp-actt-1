@@ -104,6 +104,8 @@ import {
 import { deleteImageAsset } from '../services/storageService';
 import { cleanData } from '../utils/cleanData';
 import { formatAspectRatioFromDimensions } from '../utils/aspectRatio';
+import { getOutfitAccessoryIds, getOutfitTopIds, getTopLayerLabels } from '../utils/outfitLayers';
+import { dedupeStyleTags } from '../utils/styleTags';
 
 const DEMO_SOCIAL_KEY = 'swooosh_demo_social_v3';
 
@@ -170,6 +172,7 @@ interface SocialContextType {
   // Post Actions
   publishPost: (params: {
     postType: PostType;
+    title?: string;
     caption: string;
     visibility: Visibility;
     allowRemix: boolean;
@@ -627,7 +630,12 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
   // Build sanitized piece snapshots (respecting private piece rule!)
   const buildOutfitSnapshots = (outfit: Outfit, wardrobe: ClothingItem[]): OutfitPieceSnapshot[] => {
     const snaps: OutfitPieceSnapshot[] = [];
-    const addSlot = (slot: OutfitPieceSnapshot['slot'], id?: string) => {
+    const addSlot = (
+      slot: OutfitPieceSnapshot['slot'],
+      id?: string,
+      layerLabel?: string,
+      layerIndex?: number
+    ) => {
       if (!id) return;
       const item = wardrobe.find((w) => w.id === id);
       if (!item) return;
@@ -635,6 +643,8 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
       snaps.push({
         id: item.id,
         slot,
+        ...(layerLabel ? { layerLabel } : {}),
+        ...(layerIndex !== undefined ? { layerIndex } : {}),
         name: isPrivate ? 'Private piece' : item.name,
         category: item.category,
         brand: isPrivate ? '' : item.brand || '',
@@ -646,10 +656,14 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
         isPrivatePlaceholder: isPrivate,
       });
     };
-    addSlot('top', outfit.topId);
+    const topIds = getOutfitTopIds(outfit);
+    const layerLabels = getTopLayerLabels(topIds.length);
+    topIds.forEach((tid, idx) => addSlot('top', tid, layerLabels[idx], idx));
     addSlot('bottom', outfit.bottomId);
     addSlot('shoes', outfit.shoesId);
-    (outfit.accessoryIds || []).forEach((aid) => addSlot('accessory', aid));
+    getOutfitAccessoryIds(outfit).forEach((aid, idx) =>
+      addSlot('accessory', aid, undefined, idx)
+    );
     return snaps;
   };
 
@@ -680,8 +694,11 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const publishPost: SocialContextType['publishPost'] = async (params) => {
     if (!userProfile) throw new Error('Sign in to publish posts.');
-    const safety = checkTextSafety(params.caption);
-    if (!safety.ok) throw new Error(safety.reason || 'Post text failed safety check.');
+    const cleanCaption = (params.caption || '').trim();
+    if (cleanCaption) {
+      const safety = checkTextSafety(cleanCaption);
+      if (!safety.ok) throw new Error(safety.reason || 'Post text failed safety check.');
+    }
 
     let piecesPreview: OutfitPieceSnapshot[] | undefined = params.plannedPieces;
     let mediaUrl = params.mediaUrl;
@@ -740,7 +757,14 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
       (resolvedWidth && resolvedHeight
         ? formatAspectRatioFromDimensions(resolvedWidth, resolvedHeight)
         : undefined);
-    const mentions = extractMentions(params.caption);
+    const mentions = extractMentions(cleanCaption);
+    const rawStyleTags = params.styleTags?.length
+      ? params.styleTags
+      : params.outfit
+      ? [params.outfit.styleCategory]
+      : ['Streetwear'];
+    const styleTags = dedupeStyleTags(rawStyleTags, userProfile.customStyles, 5);
+    const resolvedTitle = params.title?.trim() || params.outfit?.name?.trim() || undefined;
 
     const post: SocialPost = cleanData({
       id: `post_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -749,8 +773,9 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
       authorUsername: userProfile.username,
       authorPhotoUrl: userProfile.photoURL,
       postType: params.postType,
-      caption: params.caption.trim(),
-      hashtags: extractHashtags(params.caption),
+      title: resolvedTitle,
+      caption: cleanCaption,
+      hashtags: extractHashtags(cleanCaption),
       mentions,
       outfitId: params.outfit?.id,
       itemId: params.item?.id,
@@ -768,7 +793,7 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
       mediaDimensions,
       seasons: params.seasons || params.outfit?.seasons,
       piecesPreview,
-      styleTags: params.styleTags || (params.outfit ? [params.outfit.styleCategory] : ['Streetwear']),
+      styleTags,
       occasion: params.occasion || params.outfit?.occasion,
       visibility: params.visibility,
       allowRemix: params.allowRemix,
@@ -820,14 +845,17 @@ export const SocialContextProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const editPost: SocialContextType['editPost'] = async (post, updates) => {
     if (!userProfile || post.userId !== userProfile.uid) return;
-    const safety = checkTextSafety(updates.caption);
-    if (!safety.ok) throw new Error(safety.reason || 'Caption blocked.');
+    const trimmedCaption = updates.caption.trim();
+    if (trimmedCaption) {
+      const safety = checkTextSafety(trimmedCaption);
+      if (!safety.ok) throw new Error(safety.reason || 'Caption blocked.');
+    }
     const now = new Date().toISOString();
     const patch = {
-      caption: updates.caption.trim(),
+      caption: trimmedCaption,
       visibility: updates.visibility,
-      hashtags: extractHashtags(updates.caption),
-      mentions: extractMentions(updates.caption),
+      hashtags: extractHashtags(trimmedCaption),
+      mentions: extractMentions(trimmedCaption),
       editedAt: now,
     };
     if (isDemoMode) {

@@ -1,24 +1,29 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
 import {
+  ArrowDown,
   ArrowLeft,
   Flag,
   Image as ImageIcon,
+  Maximize2,
   MessageCircle,
   MoreHorizontal,
-  PhoneOff,
+  Phone,
   Reply,
   Send,
   ShieldAlert,
+  Smile,
   Trash2,
   Upload,
   UserPlus,
   Users,
+  Video,
   VolumeX,
   X,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useSocial } from '../context/SocialContext';
+import { useCalls } from '../context/CallContext';
 import { ChatConversation, ChatMessage, UserProfile } from '../types';
 import {
   deleteConversationMessageFirestore,
@@ -44,6 +49,7 @@ import { cleanData } from '../utils/cleanData';
 interface MessagesPageProps {
   initialConversationId?: string | null;
   onClearInitialConversation?: () => void;
+  onActiveConversationChange?: (convId: string | null) => void;
   onOpenProfile: (uid: string) => void;
   onNavigatePeople: () => void;
 }
@@ -54,10 +60,12 @@ const QUICK_EMOJIS = ['🔥', '🖤', '👟', '✨', '💯', '🙌'];
 export const MessagesPage: React.FC<MessagesPageProps> = ({
   initialConversationId,
   onClearInitialConversation,
+  onActiveConversationChange,
   onOpenProfile,
   onNavigatePeople,
 }) => {
   const { userProfile, isDemoMode } = useAuth();
+  const { startCall } = useCalls();
   const {
     conversations,
     friendIds,
@@ -119,6 +127,24 @@ export const MessagesPage: React.FC<MessagesPageProps> = ({
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [sending, setSending] = useState(false);
 
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [unreadJumpCount, setUnreadJumpCount] = useState(0);
+  const [lightboxImage, setLightboxImage] = useState<{
+    src: string;
+    mediaId?: string;
+    alt: string;
+  } | null>(null);
+  const [isMobileScreen, setIsMobileScreen] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerWidth < 768 : false
+  );
+  const [viewportHeight, setViewportHeight] = useState<number | null>(() =>
+    typeof window !== 'undefined' && window.visualViewport
+      ? window.visualViewport.height
+      : typeof window !== 'undefined'
+      ? window.innerHeight
+      : null
+  );
+
   // Modals / Popovers
   const [showNewDm, setShowNewDm] = useState(false);
   const [showNewGroup, setShowNewGroup] = useState(false);
@@ -137,6 +163,73 @@ export const MessagesPage: React.FC<MessagesPageProps> = ({
 
   const lastTypingSentRef = useRef<number>(0);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const streamRef = useRef<HTMLDivElement | null>(null);
+  const isNearBottomRef = useRef(true);
+  const prevMsgCountRef = useRef(0);
+  const prevConvIdRef = useRef<string | null>(null);
+  const justSentRef = useRef(false);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const suppressNextPushRef = useRef(false);
+
+  useEffect(() => {
+    const syncViewport = () => {
+      setIsMobileScreen(window.innerWidth < 768);
+      if (window.visualViewport) {
+        setViewportHeight(window.visualViewport.height);
+      } else {
+        setViewportHeight(window.innerHeight);
+      }
+    };
+    syncViewport();
+    window.addEventListener('resize', syncViewport);
+    window.visualViewport?.addEventListener('resize', syncViewport);
+    window.visualViewport?.addEventListener('scroll', syncViewport);
+    return () => {
+      window.removeEventListener('resize', syncViewport);
+      window.visualViewport?.removeEventListener('resize', syncViewport);
+      window.visualViewport?.removeEventListener('scroll', syncViewport);
+    };
+  }, []);
+
+  useEffect(() => {
+    onActiveConversationChange?.(activeConvId);
+    if (suppressNextPushRef.current) {
+      suppressNextPushRef.current = false;
+      return;
+    }
+    if (activeConvId) {
+      const targetPath = `/chat/${activeConvId}`;
+      if (window.location.pathname !== targetPath) {
+        window.history.pushState({ chatConvId: activeConvId }, '', targetPath);
+      }
+    } else if (window.location.pathname.startsWith('/chat/')) {
+      window.history.pushState({ chatConvId: null }, '', '/chat');
+    }
+  }, [activeConvId, onActiveConversationChange]);
+
+  useEffect(() => {
+    const onPopState = () => {
+      const match = window.location.pathname.match(/^\/chat\/([a-zA-Z0-9_-]+)/);
+      if (match?.[1]) {
+        suppressNextPushRef.current = true;
+        setActiveConvId(match[1]);
+      } else if (window.location.pathname === '/chat') {
+        suppressNextPushRef.current = true;
+        setActiveConvId(null);
+      }
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  useEffect(() => {
+    if (!lightboxImage) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLightboxImage(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [lightboxImage]);
 
   const friendProfiles = useMemo(
     () => discoverProfiles.filter((p) => friendIds.includes(p.uid)),
@@ -223,8 +316,40 @@ export const MessagesPage: React.FC<MessagesPageProps> = ({
   }, [demoMessagesByConv, activeConvId, isDemoMode]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [convMessages.length]);
+    const switchedConv = prevConvIdRef.current !== activeConvId;
+    if (switchedConv) {
+      prevConvIdRef.current = activeConvId;
+      prevMsgCountRef.current = 0;
+      isNearBottomRef.current = true;
+      setUnreadJumpCount(0);
+    }
+
+    if (convMessages.length === 0) {
+      prevMsgCountRef.current = 0;
+      return;
+    }
+
+    const addedCount = convMessages.length - prevMsgCountRef.current;
+    const lastMsg = convMessages[convMessages.length - 1];
+    const isMineLatest = Boolean(lastMsg && userProfile && lastMsg.senderId === userProfile.uid);
+
+    if (
+      prevMsgCountRef.current === 0 ||
+      justSentRef.current ||
+      isMineLatest ||
+      isNearBottomRef.current
+    ) {
+      bottomRef.current?.scrollIntoView({
+        behavior: prevMsgCountRef.current === 0 ? 'auto' : 'smooth',
+      });
+      justSentRef.current = false;
+      setUnreadJumpCount(0);
+    } else if (addedCount > 0) {
+      setUnreadJumpCount((prev) => prev + addedCount);
+    }
+
+    prevMsgCountRef.current = convMessages.length;
+  }, [convMessages.length, activeConvId, userProfile?.uid]);
 
   if (!userProfile) return null;
 
@@ -366,6 +491,7 @@ export const MessagesPage: React.FC<MessagesPageProps> = ({
     }
 
     setSending(true);
+    justSentRef.current = true;
     try {
       const now = new Date().toISOString();
       const msg: ChatMessage = cleanData({
@@ -394,9 +520,14 @@ export const MessagesPage: React.FC<MessagesPageProps> = ({
       }
 
       setDraftText('');
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto';
+      }
+      setShowEmojiPicker(false);
       setReplyingTo(null);
       setStagedImage(null);
     } catch (err: any) {
+      justSentRef.current = false;
       setChatError(err?.message || 'Failed to send message.');
     } finally {
       setSending(false);
@@ -490,7 +621,18 @@ export const MessagesPage: React.FC<MessagesPageProps> = ({
         </div>
       )}
 
-      <div className="bg-white dark:bg-[#242424] border border-[#d4cfc5] dark:border-[#404040] rounded-modal overflow-hidden grid grid-cols-1 md:grid-cols-12 min-h-[74vh] max-h-[82vh]">
+      <div
+        style={
+          isMobileScreen && activeConv && viewportHeight
+            ? { height: `${viewportHeight}px` }
+            : undefined
+        }
+        className={`bg-white dark:bg-[#242424] overflow-hidden grid grid-cols-1 md:grid-cols-12 ${
+          isMobileScreen && activeConv
+            ? 'w-full'
+            : 'border border-[#d4cfc5] dark:border-[#404040] rounded-modal min-h-[74vh] max-h-[82vh]'
+        }`}
+      >
         {/* Left Conversation List */}
         <aside
           className={`md:col-span-4 border-r border-[#d4cfc5] dark:border-[#404040] flex flex-col min-h-0 ${
@@ -502,12 +644,8 @@ export const MessagesPage: React.FC<MessagesPageProps> = ({
               <h2 className="text-base font-display font-bold text-[#171717] dark:text-[#e5e1da]">
                 Messages
               </h2>
-              <span
-                title="Voice and video calls are planned for a future update"
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-chip border border-[#d4cfc5] dark:border-[#404040] text-[10px] text-[#4e4c46] dark:text-[#b0b0b0] opacity-75 select-none"
-              >
-                <PhoneOff className="w-3 h-3" />
-                <span>Calls (coming later)</span>
+              <span className="text-[11px] font-mono-num text-[#4e4c46] dark:text-[#b0b0b0]">
+                {conversations.length} chats
               </span>
             </div>
 
@@ -725,93 +863,159 @@ export const MessagesPage: React.FC<MessagesPageProps> = ({
                         </button>
                       )}
                       {activeConv.type === 'dm' && info.otherId && (
-                        <div className="relative">
-                          <button
-                            type="button"
-                            onClick={() => setShowConvMenu((v) => !v)}
-                            aria-label="Chat safety options"
-                            className="w-10 h-10 rounded-control flex items-center justify-center border border-[#d4cfc5] dark:border-[#404040] cursor-pointer"
-                          >
-                            <MoreHorizontal className="w-4 h-4" />
-                          </button>
-                          {showConvMenu && (
-                            <div className="absolute right-0 mt-1 w-48 rounded-card bg-white dark:bg-[#242424] border border-[#d4cfc5] dark:border-[#404040] shadow-lg p-1.5 z-20 space-y-1">
+                        <>
+                          {friendIds.includes(info.otherId) && !otherBlocked && (
+                            <>
                               <button
                                 type="button"
-                                onClick={async () => {
-                                  if (info.peerProfile || info.otherId) {
-                                    await toggleMute({
-                                      uid: info.otherId!,
-                                      username: info.peerProfile?.username || 'member',
+                                onClick={() =>
+                                  startCall(
+                                    activeConv,
+                                    info.otherId!,
+                                    {
                                       displayName: info.name,
-                                    });
-                                  }
-                                  setShowConvMenu(false);
-                                }}
-                                className="w-full flex items-center gap-2 px-2.5 py-2 rounded-control text-xs text-left hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer"
-                              >
-                                <VolumeX className="w-3.5 h-3.5" />
-                                <span>{otherMuted ? 'Unmute user' : 'Mute user'}</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={async () => {
-                                  if (info.otherId) {
-                                    await toggleBlock({
-                                      uid: info.otherId,
                                       username: info.peerProfile?.username || 'member',
-                                      displayName: info.name,
-                                    });
-                                  }
-                                  setShowConvMenu(false);
-                                }}
-                                className="w-full flex items-center gap-2 px-2.5 py-2 rounded-control text-xs text-left hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer"
+                                      photoUrl: info.photoUrl,
+                                    },
+                                    'voice'
+                                  ).catch((err) =>
+                                    setChatError(err?.message || 'Could not start voice call.')
+                                  )
+                                }
+                                aria-label="Voice call"
+                                title="Start 1-to-1 voice call"
+                                className="w-10 h-10 rounded-control flex items-center justify-center border border-[#d4cfc5] dark:border-[#404040] hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer"
                               >
-                                <ShieldAlert className="w-3.5 h-3.5" />
-                                <span>{otherBlocked ? 'Unblock user' : 'Block user'}</span>
+                                <Phone className="w-4 h-4" />
                               </button>
                               <button
                                 type="button"
-                                onClick={async () => {
-                                  if (info.otherId) {
-                                    await reportItem({
-                                      targetType: 'user',
-                                      targetId: info.otherId,
-                                      targetOwnerId: info.otherId,
-                                      reason: 'Chat abuse report',
-                                    });
-                                    setChatError('Reported user to moderation queue.');
-                                  }
-                                  setShowConvMenu(false);
-                                }}
-                                className="w-full flex items-center gap-2 px-2.5 py-2 rounded-control text-xs text-left hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer"
+                                onClick={() =>
+                                  startCall(
+                                    activeConv,
+                                    info.otherId!,
+                                    {
+                                      displayName: info.name,
+                                      username: info.peerProfile?.username || 'member',
+                                      photoUrl: info.photoUrl,
+                                    },
+                                    'video'
+                                  ).catch((err) =>
+                                    setChatError(err?.message || 'Could not start video call.')
+                                  )
+                                }
+                                aria-label="Video call"
+                                title="Start 1-to-1 video call"
+                                className="w-10 h-10 rounded-control flex items-center justify-center border border-[#d4cfc5] dark:border-[#404040] hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer"
                               >
-                                <Flag className="w-3.5 h-3.5" />
-                                <span>Report user</span>
+                                <Video className="w-4 h-4" />
                               </button>
-                            </div>
+                            </>
                           )}
-                        </div>
+                          <div className="relative">
+                            <button
+                              type="button"
+                              onClick={() => setShowConvMenu((v) => !v)}
+                              aria-label="Chat safety options"
+                              className="w-10 h-10 rounded-control flex items-center justify-center border border-[#d4cfc5] dark:border-[#404040] cursor-pointer"
+                            >
+                              <MoreHorizontal className="w-4 h-4" />
+                            </button>
+                            {showConvMenu && (
+                              <div className="absolute right-0 mt-1 w-48 rounded-card bg-white dark:bg-[#242424] border border-[#d4cfc5] dark:border-[#404040] shadow-lg p-1.5 z-20 space-y-1">
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    if (info.peerProfile || info.otherId) {
+                                      await toggleMute({
+                                        uid: info.otherId!,
+                                        username: info.peerProfile?.username || 'member',
+                                        displayName: info.name,
+                                      });
+                                    }
+                                    setShowConvMenu(false);
+                                  }}
+                                  className="w-full flex items-center gap-2 px-2.5 py-2 rounded-control text-xs text-left hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer"
+                                >
+                                  <VolumeX className="w-3.5 h-3.5" />
+                                  <span>{otherMuted ? 'Unmute user' : 'Mute user'}</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    if (info.otherId) {
+                                      await toggleBlock({
+                                        uid: info.otherId,
+                                        username: info.peerProfile?.username || 'member',
+                                        displayName: info.name,
+                                      });
+                                    }
+                                    setShowConvMenu(false);
+                                  }}
+                                  className="w-full flex items-center gap-2 px-2.5 py-2 rounded-control text-xs text-left hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer"
+                                >
+                                  <ShieldAlert className="w-3.5 h-3.5" />
+                                  <span>{otherBlocked ? 'Unblock user' : 'Block user'}</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    if (info.otherId) {
+                                      await reportItem({
+                                        targetType: 'user',
+                                        targetId: info.otherId,
+                                        targetOwnerId: info.otherId,
+                                        reason: 'Chat abuse report',
+                                      });
+                                      setChatError('Reported user to moderation queue.');
+                                    }
+                                    setShowConvMenu(false);
+                                  }}
+                                  className="w-full flex items-center gap-2 px-2.5 py-2 rounded-control text-xs text-left hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer"
+                                >
+                                  <Flag className="w-3.5 h-3.5" />
+                                  <span>Report user</span>
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </>
                       )}
                     </div>
                   </div>
                 );
               })()}
 
+              {activeConv.type === 'dm' && (
+                <div className="px-3.5 py-1 border-b border-[#d4cfc5]/60 dark:border-[#404040]/60 text-[10px] text-[#4e4c46] dark:text-[#b0b0b0] bg-[#f5f4f0]/60 dark:bg-[#1e1e1e] flex items-center justify-between gap-2">
+                  <span>Calls only ring while SWOOOSH is open · If a call can&apos;t connect, try Wi-Fi</span>
+                </div>
+              )}
+
               {/* Messages Stream */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[#f5f4f0]/60 dark:bg-[#1b1b1b]">
-                {convOldestDoc && (
-                  <div className="text-center">
-                    <button
-                      type="button"
-                      onClick={handleLoadOlderConv}
-                      disabled={loadingOlderConv}
-                      className="px-3 py-1.5 rounded-chip border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] text-xs font-semibold cursor-pointer"
-                    >
-                      {loadingOlderConv ? 'Loading...' : 'Load older messages'}
-                    </button>
-                  </div>
-                )}
+              <div className="relative flex-1 min-h-0 flex flex-col">
+                <div
+                  ref={streamRef}
+                  onScroll={(e) => {
+                    const el = e.currentTarget;
+                    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 96;
+                    isNearBottomRef.current = nearBottom;
+                    if (nearBottom) setUnreadJumpCount(0);
+                  }}
+                  className="flex-1 overflow-y-auto p-3.5 sm:p-4 space-y-3 bg-[#f5f4f0]/60 dark:bg-[#1b1b1b]"
+                >
+                  {convOldestDoc && (
+                    <div className="text-center">
+                      <button
+                        type="button"
+                        onClick={handleLoadOlderConv}
+                        disabled={loadingOlderConv}
+                        className="px-3 py-1.5 rounded-chip border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] text-xs font-semibold cursor-pointer"
+                      >
+                        {loadingOlderConv ? 'Loading...' : 'Load older messages'}
+                      </button>
+                    </div>
+                  )}
 
                 {convMessages
                   .filter((m) => !isBlocked(m.senderId) && !isMuted(m.senderId))
@@ -879,14 +1083,28 @@ export const MessagesPage: React.FC<MessagesPageProps> = ({
                             </div>
                           )}
                           {msg.imageUrl && (
-                            <div className="rounded-control overflow-hidden max-h-64">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setLightboxImage({
+                                  src: msg.imageUrl!,
+                                  mediaId: msg.mediaId,
+                                  alt: msg.altText || 'Chat image',
+                                })
+                              }
+                              aria-label="Open photo in fullscreen"
+                              className="group relative block max-w-[220px] max-h-[260px] rounded-control overflow-hidden cursor-zoom-in"
+                            >
                               <GarmentImage
                                 src={msg.imageUrl}
                                 mediaId={msg.mediaId}
                                 alt={msg.altText || 'Chat image'}
-                                className="w-full max-h-64 object-cover"
+                                className="w-full max-h-[260px] object-cover"
                               />
-                            </div>
+                              <span className="absolute bottom-1.5 right-1.5 w-6 h-6 rounded-full bg-black/60 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                <Maximize2 className="w-3 h-3" />
+                              </span>
+                            </button>
                           )}
                           {msg.text && <p className="text-xs leading-relaxed whitespace-pre-wrap">{msg.text}</p>}
 
@@ -951,12 +1169,27 @@ export const MessagesPage: React.FC<MessagesPageProps> = ({
                     );
                   })}
                 <div ref={bottomRef} />
+                </div>
+
+                {unreadJumpCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+                      setUnreadJumpCount(0);
+                    }}
+                    className="absolute bottom-3 left-1/2 -translate-x-1/2 px-3.5 py-1.5 rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-semibold shadow-lg flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <span>New messages ({unreadJumpCount})</span>
+                    <ArrowDown className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
 
               {/* Message Composer */}
               <form
                 onSubmit={handleSend}
-                className="p-3 border-t border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] space-y-2"
+                className="p-2.5 sm:p-3 border-t border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] space-y-2 pb-[calc(0.625rem+env(safe-area-inset-bottom))]"
               >
                 {chatError && (
                   <div className="text-xs px-3 py-1.5 rounded-control bg-[#eae7e0] dark:bg-[#303030] border border-[#d4cfc5] dark:border-[#555555] text-[#171717] dark:text-[#e5e1da]">
@@ -1010,48 +1243,81 @@ export const MessagesPage: React.FC<MessagesPageProps> = ({
                   </div>
                 )}
 
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1">
-                    {QUICK_EMOJIS.map((emoji) => (
-                      <button
-                        key={emoji}
-                        type="button"
-                        onClick={() => setDraftText((t) => `${t}${emoji}`)}
-                        className="px-2 py-1 rounded-chip hover:bg-[#eae7e0] dark:hover:bg-[#303030] text-sm cursor-pointer"
-                      >
-                        {emoji}
-                      </button>
-                    ))}
+                {showEmojiPicker && (
+                  <div className="flex items-center justify-between gap-2 px-1">
+                    <div className="flex items-center gap-1 flex-wrap">
+                      {QUICK_EMOJIS.map((emoji) => (
+                        <button
+                          key={emoji}
+                          type="button"
+                          onClick={() => handleDraftChange(`${draftText}${emoji}`)}
+                          className="px-2 py-1 rounded-chip hover:bg-[#eae7e0] dark:hover:bg-[#303030] text-sm cursor-pointer"
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
+                    <span className="text-[10px] font-mono-num text-[#4e4c46] dark:text-[#b0b0b0]">
+                      {draftText.length}/1000
+                    </span>
                   </div>
-                  <span className="text-[10px] text-[#4e4c46] dark:text-[#b0b0b0]">
-                    {draftText.length}/1000
-                  </span>
-                </div>
+                )}
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-end gap-1.5 sm:gap-2">
                   <PhotoPickerButton
                     label=""
                     busy={uploadingPhoto}
                     title="Attach WebP photo"
                     ariaLabel="Attach WebP photo"
                     icon={<ImageIcon className="w-4 h-4" />}
-                    className="w-11 h-11 rounded-control border border-[#d4cfc5] dark:border-[#404040] flex items-center justify-center hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer shrink-0"
+                    className="w-10 h-10 sm:w-11 sm:h-11 rounded-control border border-[#d4cfc5] dark:border-[#404040] flex items-center justify-center hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer shrink-0"
                     onFileSelected={handleStageImageFile}
                     onError={(msg) => setChatError(msg)}
                   />
-                  <input
-                    type="text"
+                  <button
+                    type="button"
+                    onClick={() => setShowEmojiPicker((v) => !v)}
+                    aria-label="Toggle quick emojis"
+                    aria-expanded={showEmojiPicker}
+                    className={`w-10 h-10 sm:w-11 sm:h-11 rounded-control border flex items-center justify-center cursor-pointer shrink-0 ${
+                      showEmojiPicker
+                        ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-transparent'
+                        : 'border-[#d4cfc5] dark:border-[#404040] hover:bg-[#eae7e0] dark:hover:bg-[#303030]'
+                    }`}
+                  >
+                    <Smile className="w-4 h-4" />
+                  </button>
+                  <textarea
+                    ref={textareaRef}
+                    rows={1}
                     maxLength={1000}
                     value={draftText}
-                    onChange={(e) => handleDraftChange(e.target.value)}
+                    onChange={(e) => {
+                      handleDraftChange(e.target.value);
+                      e.target.style.height = 'auto';
+                      e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
+                    }}
+                    onKeyDown={(e) => {
+                      if (
+                        e.key === 'Enter' &&
+                        !e.shiftKey &&
+                        typeof window !== 'undefined' &&
+                        window.matchMedia?.('(pointer: fine)').matches
+                      ) {
+                        e.preventDefault();
+                        if (!sending && !uploadingPhoto && (draftText.trim() || stagedImage)) {
+                          e.currentTarget.form?.requestSubmit();
+                        }
+                      }
+                    }}
                     placeholder={uploadingPhoto ? 'Compressing WebP image...' : 'Write a message...'}
-                    className="flex-1 px-3.5 py-2.5 min-h-[44px] rounded-control border border-[#d4cfc5] dark:border-[#404040] bg-[#f5f4f0] dark:bg-[#171717] text-xs text-[#171717] dark:text-[#e5e1da]"
+                    className="flex-1 px-3.5 py-2.5 min-h-[42px] max-h-[120px] resize-none overflow-y-auto rounded-control border border-[#d4cfc5] dark:border-[#404040] bg-[#f5f4f0] dark:bg-[#171717] text-xs leading-relaxed text-[#171717] dark:text-[#e5e1da]"
                   />
                   <button
                     type="submit"
                     disabled={sending || uploadingPhoto || (!draftText.trim() && !stagedImage)}
                     aria-label="Send message"
-                    className="w-11 h-11 rounded-control bg-[#171717] dark:bg-[#e5e1da] text-[#f5f4f0] dark:text-[#171717] flex items-center justify-center disabled:opacity-45 cursor-pointer shrink-0"
+                    className="w-10 h-10 sm:w-11 sm:h-11 rounded-control bg-[#171717] dark:bg-[#e5e1da] text-[#f5f4f0] dark:text-[#171717] flex items-center justify-center disabled:opacity-45 cursor-pointer shrink-0"
                   >
                     <Send className="w-4 h-4" />
                   </button>
@@ -1328,6 +1594,36 @@ export const MessagesPage: React.FC<MessagesPageProps> = ({
             >
               Leave Group Chat
             </button>
+          </div>
+        </div>
+      )}
+      {/* Fullscreen Chat Photo Lightbox */}
+      {lightboxImage && (
+        <div
+          className="fixed inset-0 z-[85] bg-black/90 flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Photo preview"
+          onClick={() => setLightboxImage(null)}
+        >
+          <button
+            type="button"
+            onClick={() => setLightboxImage(null)}
+            aria-label="Close photo preview"
+            className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/15 text-white flex items-center justify-center hover:bg-white/25 cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="max-w-4xl max-h-[90vh] w-full flex items-center justify-center"
+          >
+            <GarmentImage
+              src={lightboxImage.src}
+              mediaId={lightboxImage.mediaId}
+              alt={lightboxImage.alt}
+              className="max-w-full max-h-[88vh] object-contain rounded-control"
+            />
           </div>
         </div>
       )}

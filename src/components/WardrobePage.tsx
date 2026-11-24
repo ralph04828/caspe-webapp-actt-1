@@ -5,8 +5,8 @@ import {
   ClothingItem,
   LaundryStatus,
   SEASON_TAGS,
-  STYLE_CATEGORIES,
   SeasonTag,
+  SizeSystem,
   Visibility,
 } from '../types';
 import { useAuth } from '../context/AuthContext';
@@ -14,6 +14,25 @@ import { useWardrobe } from '../context/WardrobeContext';
 import { preparePreviewDataUrl, resolveMediaRef, uploadImageAsset } from '../services/storageService';
 import { removeBackgroundClient } from '../utils/bgRemoval';
 import { buildAutoAltText } from '../utils/formatters';
+import {
+  ACCESSORY_PRESET_SIZES,
+  BottomSizeMode,
+  formatShoeSizeValue,
+  getCategorySizeKind,
+  getDefaultSizeForCategory,
+  getSavedShoeSystem,
+  getShoeSizesForSystem,
+  getSizeFilterOptionsForCategory,
+  isSizeValidForCategory,
+  LETTER_SIZES,
+  parseShoeSizeValue,
+  savePreferredShoeSystem,
+  SHOE_SIZE_SYSTEMS,
+  ShoeSizeSystem,
+  TOP_SIZES,
+  WAIST_SIZES,
+} from '../utils/sizing';
+import { dedupeStyleTags } from '../utils/styleTags';
 import {
   getDraftSessionKey,
   loadSessionJson,
@@ -26,6 +45,7 @@ import { VisibilityBadge } from './VisibilityBadge';
 import { CropAspectKey, PhotoCropEditor, PhotoCropState, createDefaultCropState } from './PhotoEditorModal';
 import { PhotoPickerButton } from './PhotoPickerButton';
 import { DiscardDraftDialog } from './DiscardDraftDialog';
+import { StyleTagSelector } from './StyleTagSelector';
 import { ErrorBoundary } from './ErrorBoundary';
 import {
   Plus,
@@ -68,6 +88,7 @@ interface WardrobeDraft {
   brand: string;
   color: string;
   size: string;
+  sizeSystem?: SizeSystem;
   seasons: SeasonTag[];
   styleTags: string[];
   visibility: Visibility;
@@ -79,7 +100,9 @@ interface WardrobeDraft {
 const LAUNDRY_CYCLE: LaundryStatus[] = ['clean', 'dirty', 'washing'];
 const VISIBILITY_CYCLE: Visibility[] = ['public', 'friends', 'followers', 'private'];
 
-function makeEmptyWardrobeDraft(defaultVis: Visibility): WardrobeDraft {
+function makeEmptyWardrobeDraft(defaultVis: Visibility, uid?: string): WardrobeDraft {
+  const shoeSys = getSavedShoeSystem(uid);
+  const { size, sizeSystem } = getDefaultSizeForCategory('T-shirts', shoeSys);
   return {
     step: 'photo',
     editingItemId: null,
@@ -92,7 +115,8 @@ function makeEmptyWardrobeDraft(defaultVis: Visibility): WardrobeDraft {
     category: 'T-shirts',
     brand: '',
     color: '',
-    size: 'L',
+    size,
+    sizeSystem,
     seasons: ['All-Season'],
     styleTags: ['Streetwear'],
     visibility: defaultVis,
@@ -123,13 +147,23 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
   const draftKey = getDraftSessionKey('wardrobe', userProfile?.uid || 'anon');
 
   const [search, setSearch] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState<string>('All');
+  const [categoryFilter, setCategoryFilter] = useState<'All' | ClothingCategory>('All');
+  const [sizeFilter, setSizeFilter] = useState<string>('All');
   const [laundryFilter, setLaundryFilter] = useState<'all' | LaundryStatus>('all');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [detailItem, setDetailItem] = useState<ClothingItem | null>(null);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<ClothingItem | null>(null);
-  const [draft, setDraft] = useState<WardrobeDraft>(() => makeEmptyWardrobeDraft(defaultVis));
+  const [draft, setDraft] = useState<WardrobeDraft>(() =>
+    makeEmptyWardrobeDraft(defaultVis, userProfile?.uid)
+  );
+  const [bottomSizeMode, setBottomSizeMode] = useState<BottomSizeMode>('Letter');
+  const [shoeSizeSystem, setShoeSizeSystem] = useState<ShoeSizeSystem>(() =>
+    getSavedShoeSystem(userProfile?.uid)
+  );
+  const [accessoryOtherMode, setAccessoryOtherMode] = useState(false);
+  const [sizeResetWarning, setSizeResetWarning] = useState<string | null>(null);
 
   const [preparingPhoto, setPreparingPhoto] = useState(false);
   const [resolvingForCrop, setResolvingForCrop] = useState(false);
@@ -151,7 +185,7 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
     const savedSession = loadSessionJson<WardrobeDraft>(draftKey);
     if (savedSession && !savedSession.editingItemId && (openAddModalOnMount || savedSession.rawPhotoUrl || savedSession.name)) {
       setEditingItem(null);
-      setDraft({ ...makeEmptyWardrobeDraft(defaultVis), ...savedSession });
+      setDraft({ ...makeEmptyWardrobeDraft(defaultVis, userProfile?.uid), ...savedSession });
       setModalOpen(true);
       onConsumedOpenAdd?.();
     } else if (openAddModalOnMount) {
@@ -238,10 +272,11 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
     setDiscardPromptOpen(false);
     setModalOpen(false);
     setModalError(null);
+    setSizeResetWarning(null);
     setEditingItem(null);
     removeSessionKey(draftKey);
     removeIdbDraft(draftKey);
-    setDraft(makeEmptyWardrobeDraft(defaultVis));
+    setDraft(makeEmptyWardrobeDraft(defaultVis, userProfile?.uid));
   };
 
   useEffect(() => {
@@ -255,10 +290,27 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
     return () => window.removeEventListener('keydown', onKey);
   }, [modalOpen, discardPromptOpen, hasUnsavedChanges, saving, preparingPhoto]);
 
+  const syncSizeHelpersForItem = (cat: ClothingCategory, sizeVal: string, sys?: SizeSystem) => {
+    setSizeResetWarning(null);
+    const kind = getCategorySizeKind(cat);
+    if (kind === 'bottoms') {
+      const isWaist = WAIST_SIZES.includes((sizeVal || '').replace(/^(W|Waist)\s*/i, '')) || sys === 'Waist';
+      setBottomSizeMode(isWaist ? 'Waist' : 'Letter');
+    } else if (kind === 'footwear') {
+      const savedSys = getSavedShoeSystem(userProfile?.uid);
+      const parsed = parseShoeSizeValue(sizeVal, (sys as ShoeSizeSystem) || savedSys);
+      setShoeSizeSystem(parsed.system);
+    } else if (kind === 'accessories') {
+      const isCustom = Boolean(sizeVal && !(ACCESSORY_PRESET_SIZES as readonly string[]).includes(sizeVal));
+      setAccessoryOtherMode(isCustom);
+    }
+  };
+
   const openAdd = () => {
     setEditingItem(null);
     setModalError(null);
-    const fresh = makeEmptyWardrobeDraft(defaultVis);
+    const fresh = makeEmptyWardrobeDraft(defaultVis, userProfile?.uid);
+    syncSizeHelpersForItem(fresh.category, fresh.size, fresh.sizeSystem);
     setDraft(fresh);
     setModalOpen(true);
   };
@@ -266,6 +318,8 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
   const openEdit = (item: ClothingItem) => {
     setEditingItem(item);
     setModalError(null);
+    setDetailItem(null);
+    syncSizeHelpersForItem(item.category, item.size || '', item.sizeSystem);
     setDraft({
       step: 'details',
       editingItemId: item.id,
@@ -278,9 +332,10 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
       category: item.category,
       brand: item.brand,
       color: item.color,
-      size: item.size,
+      size: item.size || '',
+      sizeSystem: item.sizeSystem,
       seasons: item.seasons?.length ? item.seasons : ['All-Season'],
-      styleTags: item.styleTags || [],
+      styleTags: dedupeStyleTags(item.styleTags || [], userProfile?.customStyles),
       visibility: item.visibility || 'public',
       laundryStatus: item.laundryStatus || 'clean',
       description: item.description || '',
@@ -426,15 +481,31 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
           category: draft.category,
         });
 
+      const cleanedTags = dedupeStyleTags(draft.styleTags, userProfile.customStyles);
+      const kind = getCategorySizeKind(draft.category);
+      const finalSize =
+        kind === 'footwear' && draft.size.trim()
+          ? formatShoeSizeValue(shoeSizeSystem, draft.size)
+          : draft.size.trim();
+      const finalSizeSystem: SizeSystem | undefined =
+        kind === 'footwear'
+          ? shoeSizeSystem
+          : kind === 'bottoms'
+          ? bottomSizeMode
+          : kind === 'tops'
+          ? 'Letter'
+          : 'Other';
+
       if (editingItem) {
         await editClothing(editingItem.id, {
           name: draft.name.trim(),
           category: draft.category,
           brand: draft.brand.trim() || 'Unbranded',
           color: draft.color.trim() || 'Neutral',
-          size: draft.size.trim() || 'M',
+          size: finalSize,
+          sizeSystem: finalSizeSystem,
           seasons: draft.seasons,
-          styleTags: draft.styleTags,
+          styleTags: cleanedTags,
           visibility: draft.visibility,
           laundryStatus: draft.laundryStatus,
           description: draft.description.trim(),
@@ -451,9 +522,10 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
           category: draft.category,
           brand: draft.brand.trim() || 'Unbranded',
           color: draft.color.trim() || 'Neutral',
-          size: draft.size.trim() || 'M',
+          size: finalSize,
+          sizeSystem: finalSizeSystem,
           seasons: draft.seasons,
-          styleTags: draft.styleTags,
+          styleTags: cleanedTags,
           visibility: draft.visibility,
           laundryStatus: draft.laundryStatus,
           description: draft.description.trim(),
@@ -478,20 +550,35 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
     }
   };
 
+  const sizeFilterOptions = useMemo(
+    () => getSizeFilterOptionsForCategory(categoryFilter, wardrobe),
+    [categoryFilter, wardrobe]
+  );
+
+  useEffect(() => {
+    if (sizeFilter !== 'All' && !sizeFilterOptions.includes(sizeFilter)) {
+      setSizeFilter('All');
+    }
+  }, [sizeFilterOptions, sizeFilter]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return wardrobe.filter((item) => {
       if (categoryFilter !== 'All' && item.category !== categoryFilter) return false;
+      if (sizeFilter !== 'All' && (item.size || '').trim().toLowerCase() !== sizeFilter.trim().toLowerCase()) {
+        return false;
+      }
       if (laundryFilter !== 'all' && item.laundryStatus !== laundryFilter) return false;
       if (!q) return true;
       return (
         item.name.toLowerCase().includes(q) ||
         item.brand.toLowerCase().includes(q) ||
         item.color.toLowerCase().includes(q) ||
+        (item.size || '').toLowerCase().includes(q) ||
         (item.styleTags || []).some((t) => t.toLowerCase().includes(q))
       );
     });
-  }, [wardrobe, search, categoryFilter, laundryFilter]);
+  }, [wardrobe, search, categoryFilter, sizeFilter, laundryFilter]);
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
@@ -640,25 +727,51 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-1.5">
-          {['All', ...CLOTHING_CATEGORIES].map((cat) => (
-            <button
-              key={cat}
-              type="button"
-              onClick={() => setCategoryFilter(cat)}
-              className={`px-2.5 py-1 rounded-chip text-[11px] font-medium border cursor-pointer ${
-                categoryFilter === cat
-                  ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-transparent'
-                  : 'border-[#d4cfc5] dark:border-[#404040] bg-[#f5f4f0] dark:bg-[#171717]'
-              }`}
-            >
-              {cat}
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap gap-1.5 flex-1">
+            {(['All', ...CLOTHING_CATEGORIES] as const).map((cat) => (
+              <button
+                key={cat}
+                type="button"
+                onClick={() => setCategoryFilter(cat)}
+                className={`px-2.5 py-1 rounded-chip text-[11px] font-medium border cursor-pointer ${
+                  categoryFilter === cat
+                    ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-transparent'
+                    : 'border-[#d4cfc5] dark:border-[#404040] bg-[#f5f4f0] dark:bg-[#171717]'
+                }`}
+              >
+                {cat}
+              </button>
+            ))}
+          </div>
+
+          {sizeFilterOptions.length > 0 && (
+            <div className="flex items-center gap-1.5 shrink-0">
+              <label
+                htmlFor="wardrobe-size-filter"
+                className="text-[11px] font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8]"
+              >
+                Size
+              </label>
+              <select
+                id="wardrobe-size-filter"
+                value={sizeFilter}
+                onChange={(e) => setSizeFilter(e.target.value)}
+                className="px-2.5 py-1.5 rounded-control text-xs bg-[#f5f4f0] dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+              >
+                <option value="All">All sizes</option>
+                {sizeFilterOptions.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Wardrobe Grid */}
+      {/* Wardrobe Grid (3 columns on mobile, 4 on desktop) */}
       {filtered.length === 0 ? (
         <div className="p-10 rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] text-center space-y-2">
           <p className="font-display font-bold text-base">No garments found</p>
@@ -667,108 +780,207 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-3 lg:grid-cols-4 gap-1.5 sm:gap-3">
           {filtered.map((item) => {
             const isSelected = selectedIds.has(item.id);
-            const nextVis =
-              VISIBILITY_CYCLE[(VISIBILITY_CYCLE.indexOf(item.visibility || 'public') + 1) % VISIBILITY_CYCLE.length];
+            const laundryDotCls =
+              item.laundryStatus === 'dirty'
+                ? 'bg-amber-500'
+                : item.laundryStatus === 'washing'
+                ? 'bg-sky-500'
+                : 'bg-emerald-500';
 
             return (
               <article
                 key={item.id}
-                className="rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] overflow-hidden flex flex-col shadow-sm"
+                className="group relative rounded-control sm:rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] overflow-hidden shadow-sm"
               >
-                <div className="relative aspect-square bg-[#eae7e0] dark:bg-[#171717]">
-                  <GarmentImage
-                    src={item.thumbUrl || item.imageUrl}
-                    mediaId={item.mediaId}
-                    alt={item.altText || item.name}
-                    fallbackLabel={item.name}
-                    isCutout={item.isCutout}
-                    onReuploadClick={() => openEdit(item)}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => toggleSelect(item.id)}
-                    aria-label={isSelected ? `Deselect ${item.name}` : `Select ${item.name}`}
-                    className="absolute top-2.5 left-2.5 p-1.5 rounded-chip bg-white/90 dark:bg-[#171717]/90 border border-[#d4cfc5] dark:border-[#404040] cursor-pointer"
-                  >
-                    {isSelected ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
-                  </button>
-                  <div className="absolute top-2.5 right-2.5">
-                    <VisibilityBadge
-                      visibility={item.visibility || 'public'}
-                      onClick={() => editClothing(item.id, { visibility: nextVis })}
+                <button
+                  type="button"
+                  onClick={() => setDetailItem(item)}
+                  aria-label={`Open ${item.name} details`}
+                  className="w-full block text-left cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#171717] dark:focus-visible:ring-[#e5e1da]"
+                >
+                  <div className="relative aspect-square bg-[#eae7e0] dark:bg-[#171717] overflow-hidden">
+                    <GarmentImage
+                      src={item.thumbUrl || item.imageUrl}
+                      mediaId={item.mediaId}
+                      alt={item.altText || item.name}
+                      fallbackLabel={item.name}
+                      isCutout={item.isCutout}
+                      className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
+                    />
+                    <span
+                      title={`Laundry: ${item.laundryStatus}`}
+                      className={`absolute bottom-1.5 right-1.5 w-2.5 h-2.5 rounded-full ring-2 ring-white dark:ring-[#171717] ${laundryDotCls}`}
                     />
                   </div>
-                </div>
-
-                <div className="p-4 flex-1 flex flex-col justify-between gap-3">
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between gap-2 text-[11px] text-[#4e4c46] dark:text-[#c2bfb8]">
-                      <span className="font-semibold uppercase tracking-wider truncate">
-                        {item.brand}
-                      </span>
-                      <span className="font-mono-num">Size {item.size}</span>
-                    </div>
-                    <h3 className="font-display font-bold text-sm leading-snug line-clamp-1">
-                      {item.name}
-                    </h3>
-                    <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8]">
-                      {item.category} · {item.color}
+                  <div className="p-1.5 sm:p-2.5 space-y-0.5">
+                    <p className="text-[11px] sm:text-xs font-semibold truncate">{item.name}</p>
+                    <p className="text-[10px] text-[#4e4c46] dark:text-[#c2bfb8] truncate">
+                      {item.size ? `${item.size} · ` : ''}
+                      {item.category}
                     </p>
                   </div>
+                </button>
 
-                  <div className="space-y-2.5">
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      {renderLaundryChip(item)}
-                      <span className="text-[11px] font-mono-num text-[#4e4c46] dark:text-[#c2bfb8]">
-                        {item.wearCount || 0} wears
-                      </span>
-                    </div>
-
-                    <div className="pt-2 border-t border-[#d4cfc5]/70 dark:border-[#404040]/70 flex items-center justify-between gap-1">
-                      {onSharePiece && (
-                        <button
-                          type="button"
-                          onClick={() => onSharePiece(item)}
-                          title="Post this garment to the feed"
-                          className="px-2.5 py-1.5 rounded-control hover:bg-[#eae7e0] dark:hover:bg-[#303030] text-xs font-medium flex items-center gap-1 cursor-pointer"
-                        >
-                          <Share2 className="w-3.5 h-3.5" />
-                          <span>Post this</span>
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => openEdit(item)}
-                        aria-label={`Edit ${item.name}`}
-                        className="p-2 rounded-control hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer ml-auto"
-                      >
-                        <Edit3 className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          try {
-                            await removeClothing(item);
-                            onToast('Removed from wardrobe.');
-                          } catch (err: any) {
-                            console.error('Delete wardrobe item error:', err);
-                            onToast(err?.message || 'Could not remove garment.', 'error');
-                          }
-                        }}
-                        aria-label={`Delete ${item.name}`}
-                        className="p-2 rounded-control hover:bg-red-500/15 text-red-600 dark:text-red-400 cursor-pointer"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleSelect(item.id);
+                  }}
+                  aria-label={isSelected ? `Deselect ${item.name}` : `Select ${item.name}`}
+                  className="absolute top-1.5 left-1.5 p-1 rounded-chip bg-white/90 dark:bg-[#171717]/90 border border-[#d4cfc5] dark:border-[#404040] cursor-pointer"
+                >
+                  {isSelected ? <CheckSquare className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5" />}
+                </button>
               </article>
             );
           })}
+        </div>
+      )}
+
+      {/* Garment Detail Modal */}
+      {detailItem && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
+          role="dialog"
+          aria-modal="true"
+          aria-label={detailItem.name}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setDetailItem(null);
+          }}
+        >
+          <div className="w-full max-w-lg rounded-modal bg-[#f5f4f0] dark:bg-[#242424] border border-[#d4cfc5] dark:border-[#404040] shadow-2xl overflow-hidden my-auto">
+            <div className="px-5 py-3.5 border-b border-[#d4cfc5] dark:border-[#404040] flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-[10px] font-mono-num uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] truncate">
+                  {detailItem.brand} · {detailItem.category}
+                </p>
+                <h2 className="font-display font-bold text-base truncate">{detailItem.name}</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDetailItem(null)}
+                aria-label="Close garment details"
+                className="w-9 h-9 rounded-control flex items-center justify-center hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 max-h-[82vh] overflow-y-auto space-y-4">
+              <div className="relative aspect-square max-h-72 mx-auto rounded-card overflow-hidden bg-[#eae7e0] dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]">
+                <GarmentImage
+                  src={detailItem.imageUrl || detailItem.thumbUrl}
+                  mediaId={detailItem.mediaId}
+                  alt={detailItem.altText || detailItem.name}
+                  fallbackLabel={detailItem.name}
+                  isCutout={detailItem.isCutout}
+                />
+                <div className="absolute top-2.5 right-2.5">
+                  <VisibilityBadge
+                    visibility={detailItem.visibility || 'public'}
+                    onClick={() => {
+                      const nextVis =
+                        VISIBILITY_CYCLE[
+                          (VISIBILITY_CYCLE.indexOf(detailItem.visibility || 'public') + 1) %
+                            VISIBILITY_CYCLE.length
+                        ];
+                      editClothing(detailItem.id, { visibility: nextVis });
+                      setDetailItem((prev) => (prev ? { ...prev, visibility: nextVis } : null));
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <div className="p-2.5 rounded-control bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]">
+                  <p className="text-[10px] uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8]">Size</p>
+                  <p className="font-semibold font-mono-num">{detailItem.size || '—'}</p>
+                </div>
+                <div className="p-2.5 rounded-control bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]">
+                  <p className="text-[10px] uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8]">Color</p>
+                  <p className="font-semibold truncate">{detailItem.color || 'Neutral'}</p>
+                </div>
+                <div className="p-2.5 rounded-control bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]">
+                  <p className="text-[10px] uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8]">Wears</p>
+                  <p className="font-semibold font-mono-num">{detailItem.wearCount || 0}</p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                {renderLaundryChip(detailItem)}
+                <div className="flex flex-wrap gap-1.5">
+                  {(detailItem.seasons || []).map((s) => (
+                    <span
+                      key={s}
+                      className="px-2 py-0.5 rounded-chip border border-[#d4cfc5] dark:border-[#404040] text-[10px]"
+                    >
+                      {s}
+                    </span>
+                  ))}
+                  {dedupeStyleTags(detailItem.styleTags || []).map((t) => (
+                    <span
+                      key={t}
+                      className="px-2 py-0.5 rounded-chip bg-[#eae7e0] dark:bg-[#303030] text-[10px] font-medium"
+                    >
+                      {t}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              {detailItem.description && (
+                <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8] leading-relaxed">
+                  {detailItem.description}
+                </p>
+              )}
+
+              <div className="pt-3 border-t border-[#d4cfc5] dark:border-[#404040] flex flex-wrap items-center gap-2">
+                {onSharePiece && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const target = detailItem;
+                      setDetailItem(null);
+                      onSharePiece(target);
+                    }}
+                    className="px-4 py-2 min-h-[40px] rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Share2 className="w-3.5 h-3.5" />
+                    <span>Post this</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => openEdit(detailItem)}
+                  className="px-3.5 py-2 min-h-[40px] rounded-control border border-[#d4cfc5] dark:border-[#404040] text-xs font-semibold flex items-center gap-1.5 hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer"
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                  <span>Edit</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await removeClothing(detailItem);
+                      setDetailItem(null);
+                      onToast('Removed from wardrobe.');
+                    } catch (err: any) {
+                      console.error('Delete wardrobe item error:', err);
+                      onToast(err?.message || 'Could not remove garment.', 'error');
+                    }
+                  }}
+                  className="px-3.5 py-2 min-h-[40px] rounded-control border border-red-500/40 text-red-600 dark:text-red-400 text-xs font-semibold flex items-center gap-1.5 hover:bg-red-500/10 cursor-pointer ml-auto"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Delete</span>
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1040,7 +1252,43 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
                         </label>
                         <select
                           value={draft.category}
-                          onChange={(e) => updateDraft({ category: e.target.value as ClothingCategory })}
+                          onChange={(e) => {
+                            const nextCat = e.target.value as ClothingCategory;
+                            const nextKind = getCategorySizeKind(nextCat);
+                            const valid = isSizeValidForCategory(draft.size, nextCat);
+                            if (!valid && draft.size.trim()) {
+                              setSizeResetWarning(
+                                'Size cleared because it does not match the new category.'
+                              );
+                            } else {
+                              setSizeResetWarning(null);
+                            }
+                            if (nextKind === 'accessories') {
+                              setAccessoryOtherMode(
+                                valid &&
+                                  Boolean(draft.size) &&
+                                  !(ACCESSORY_PRESET_SIZES as readonly string[]).includes(draft.size)
+                              );
+                            } else if (nextKind === 'bottoms') {
+                              const isW = WAIST_SIZES.includes(
+                                (valid ? draft.size : '').replace(/^(W|Waist)\s*/i, '')
+                              );
+                              setBottomSizeMode(isW ? 'Waist' : 'Letter');
+                            }
+                            updateDraft((prev) => ({
+                              ...prev,
+                              category: nextCat,
+                              size: valid ? prev.size : '',
+                              sizeSystem:
+                                nextKind === 'footwear'
+                                  ? shoeSizeSystem
+                                  : nextKind === 'bottoms'
+                                  ? bottomSizeMode
+                                  : nextKind === 'tops'
+                                  ? 'Letter'
+                                  : 'Other',
+                            }));
+                          }}
                           className="w-full px-3 py-2 min-h-[42px] rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
                         >
                           {CLOTHING_CATEGORIES.map((c) => (
@@ -1050,32 +1298,219 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
                           ))}
                         </select>
                       </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1">
-                            Color
-                          </label>
-                          <input
-                            type="text"
-                            value={draft.color}
-                            onChange={(e) => updateDraft({ color: e.target.value })}
-                            placeholder="Charcoal"
-                            className="w-full px-3 py-2 min-h-[42px] rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1">
-                            Size
-                          </label>
-                          <input
-                            type="text"
-                            value={draft.size}
-                            onChange={(e) => updateDraft({ size: e.target.value })}
-                            placeholder="L"
-                            className="w-full px-3 py-2 min-h-[42px] rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
-                          />
-                        </div>
+                      <div>
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1">
+                          Color
+                        </label>
+                        <input
+                          type="text"
+                          value={draft.color}
+                          onChange={(e) => updateDraft({ color: e.target.value })}
+                          placeholder="Charcoal"
+                          className="w-full px-3 py-2 min-h-[42px] rounded-control text-sm bg-white dark:bg-[#171717] border border-[#d4cfc5] dark:border-[#404040]"
+                        />
                       </div>
+                    </div>
+
+                    {/* Category-Aware Size Picker */}
+                    <div className="p-3 rounded-control border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#171717] space-y-2.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8]">
+                          Size ({draft.category})
+                        </label>
+
+                        {getCategorySizeKind(draft.category) === 'bottoms' && (
+                          <div className="inline-flex rounded-chip border border-[#d4cfc5] dark:border-[#404040] overflow-hidden text-[11px]">
+                            {(['Letter', 'Waist'] as BottomSizeMode[]).map((mode) => (
+                              <button
+                                key={mode}
+                                type="button"
+                                onClick={() => setBottomSizeMode(mode)}
+                                className={`px-2.5 py-1 font-semibold cursor-pointer ${
+                                  bottomSizeMode === mode
+                                    ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717]'
+                                    : ''
+                                }`}
+                              >
+                                {mode}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        {getCategorySizeKind(draft.category) === 'footwear' && (
+                          <div className="inline-flex rounded-chip border border-[#d4cfc5] dark:border-[#404040] overflow-hidden text-[11px]">
+                            {SHOE_SIZE_SYSTEMS.map((sys) => (
+                              <button
+                                key={sys}
+                                type="button"
+                                onClick={() => {
+                                  setShoeSizeSystem(sys);
+                                  savePreferredShoeSystem(sys, userProfile?.uid);
+                                  updateDraft({ size: '', sizeSystem: sys });
+                                }}
+                                className={`px-2.5 py-1 font-semibold cursor-pointer ${
+                                  shoeSizeSystem === sys
+                                    ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717]'
+                                    : ''
+                                }`}
+                              >
+                                {sys}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {sizeResetWarning && (
+                        <p role="status" className="text-[11px] text-amber-700 dark:text-amber-300 font-medium">
+                          {sizeResetWarning}
+                        </p>
+                      )}
+
+                      {getCategorySizeKind(draft.category) === 'tops' && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {TOP_SIZES.map((sz) => {
+                            const active = draft.size === sz;
+                            return (
+                              <button
+                                key={sz}
+                                type="button"
+                                onClick={() => {
+                                  setSizeResetWarning(null);
+                                  updateDraft({ size: sz, sizeSystem: 'Letter' });
+                                }}
+                                className={`px-3 py-1.5 min-h-[34px] rounded-chip text-xs font-semibold border cursor-pointer ${
+                                  active
+                                    ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-transparent'
+                                    : 'border-[#d4cfc5] dark:border-[#404040]'
+                                }`}
+                              >
+                                {sz}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {getCategorySizeKind(draft.category) === 'bottoms' && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {(bottomSizeMode === 'Letter'
+                            ? [...LETTER_SIZES, 'One size']
+                            : [...WAIST_SIZES, 'One size']
+                          ).map((sz) => {
+                            const active = draft.size === sz;
+                            return (
+                              <button
+                                key={sz}
+                                type="button"
+                                onClick={() => {
+                                  setSizeResetWarning(null);
+                                  updateDraft({ size: sz, sizeSystem: bottomSizeMode });
+                                }}
+                                className={`px-3 py-1.5 min-h-[34px] rounded-chip text-xs font-semibold border cursor-pointer ${
+                                  active
+                                    ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-transparent'
+                                    : 'border-[#d4cfc5] dark:border-[#404040]'
+                                }`}
+                              >
+                                {sz}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {getCategorySizeKind(draft.category) === 'footwear' && (
+                        <select
+                          value={parseShoeSizeValue(draft.size, shoeSizeSystem).value}
+                          onChange={(e) => {
+                            setSizeResetWarning(null);
+                            const raw = e.target.value;
+                            updateDraft({
+                              size: raw ? formatShoeSizeValue(shoeSizeSystem, raw) : '',
+                              sizeSystem: shoeSizeSystem,
+                            });
+                          }}
+                          className="w-full px-3 py-2 min-h-[42px] rounded-control text-sm bg-[#f5f4f0] dark:bg-[#242424] border border-[#d4cfc5] dark:border-[#404040]"
+                        >
+                          <option value="">Select {shoeSizeSystem} shoe size...</option>
+                          {getShoeSizesForSystem(shoeSizeSystem).map((sz) => (
+                            <option key={sz} value={sz}>
+                              {shoeSizeSystem} {sz}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+
+                      {getCategorySizeKind(draft.category) === 'accessories' && (
+                        <div className="space-y-2">
+                          <div className="flex flex-wrap gap-1.5">
+                            {ACCESSORY_PRESET_SIZES.map((sz) => {
+                              const active = !accessoryOtherMode && draft.size === sz;
+                              return (
+                                <button
+                                  key={sz}
+                                  type="button"
+                                  onClick={() => {
+                                    setAccessoryOtherMode(false);
+                                    setSizeResetWarning(null);
+                                    updateDraft({ size: sz, sizeSystem: 'Other' });
+                                  }}
+                                  className={`px-3 py-1.5 min-h-[34px] rounded-chip text-xs font-semibold border cursor-pointer ${
+                                    active
+                                      ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-transparent'
+                                      : 'border-[#d4cfc5] dark:border-[#404040]'
+                                  }`}
+                                >
+                                  {sz}
+                                </button>
+                              );
+                            })}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAccessoryOtherMode(true);
+                                setSizeResetWarning(null);
+                                if ((ACCESSORY_PRESET_SIZES as readonly string[]).includes(draft.size)) {
+                                  updateDraft({ size: '', sizeSystem: 'Other' });
+                                }
+                              }}
+                              className={`px-3 py-1.5 min-h-[34px] rounded-chip text-xs font-semibold border cursor-pointer ${
+                                accessoryOtherMode
+                                  ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-transparent'
+                                  : 'border-dashed border-[#4e4c46] dark:border-[#888888]'
+                              }`}
+                            >
+                              Other
+                            </button>
+                          </div>
+                          {accessoryOtherMode && (
+                            <input
+                              type="text"
+                              maxLength={32}
+                              value={draft.size}
+                              onChange={(e) => updateDraft({ size: e.target.value, sizeSystem: 'Other' })}
+                              placeholder="e.g. Ring 8, Belt 34 in, Cap 7 1/4"
+                              className="w-full px-3 py-2 min-h-[40px] rounded-control text-xs bg-[#f5f4f0] dark:bg-[#242424] border border-[#d4cfc5] dark:border-[#404040]"
+                            />
+                          )}
+                        </div>
+                      )}
+
+                      {getCategorySizeKind(draft.category) === 'other' && (
+                        <input
+                          type="text"
+                          maxLength={32}
+                          value={draft.size}
+                          onChange={(e) => {
+                            setSizeResetWarning(null);
+                            updateDraft({ size: e.target.value, sizeSystem: 'Other' });
+                          }}
+                          placeholder="Enter size (e.g. M, 32, OS, Custom)"
+                          className="w-full px-3 py-2 min-h-[40px] rounded-control text-xs bg-[#f5f4f0] dark:bg-[#242424] border border-[#d4cfc5] dark:border-[#404040]"
+                        />
+                      )}
                     </div>
 
                     {/* Seasons & Style Tags */}
@@ -1113,37 +1548,12 @@ export const WardrobePage: React.FC<WardrobePageProps> = ({
                       </div>
                     </div>
 
-                    <div>
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1.5">
-                        Style Tags
-                      </label>
-                      <div className="flex flex-wrap gap-1.5">
-                        {STYLE_CATEGORIES.map((tag) => {
-                          const active = draft.styleTags.includes(tag);
-                          return (
-                            <button
-                              key={tag}
-                              type="button"
-                              onClick={() =>
-                                updateDraft((prev) => ({
-                                  ...prev,
-                                  styleTags: prev.styleTags.includes(tag)
-                                    ? prev.styleTags.filter((x) => x !== tag)
-                                    : [...prev.styleTags, tag],
-                                }))
-                              }
-                              className={`px-2.5 py-1 rounded-chip text-xs border cursor-pointer ${
-                                active
-                                  ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-transparent'
-                                  : 'border-[#d4cfc5] dark:border-[#404040]'
-                              }`}
-                            >
-                              {tag}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
+                    <StyleTagSelector
+                      label="Style Tags"
+                      selected={draft.styleTags}
+                      onChange={(next) => updateDraft({ styleTags: next })}
+                      onError={(msg) => setModalError(msg)}
+                    />
 
                     {/* Visibility & Laundry */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

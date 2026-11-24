@@ -1,12 +1,18 @@
-import React, { useState } from 'react';
-import { NavSection, Outfit, ShareLink, ShareVisibility } from '../types';
+import React, { useMemo, useState } from 'react';
+import { ClothingItem, NavSection, Outfit, ShareLink, ShareVisibility } from '../types';
 import { useWardrobe } from '../context/WardrobeContext';
 import { useSocial } from '../context/SocialContext';
+import {
+  getOutfitAccessoryIds,
+  getOutfitAllItemIds,
+  getOutfitTopIds,
+  getTopLayerLabels,
+} from '../utils/outfitLayers';
 import { GarmentImage } from './GarmentImage';
+import { OutfitCollageThumb } from './OutfitCollageThumb';
 import { VisibilityBadge } from './VisibilityBadge';
 import {
   Heart,
-  Edit3,
   Trash2,
   Share2,
   Link2,
@@ -16,6 +22,7 @@ import {
   Repeat,
   Plus,
   X,
+  Lock,
 } from 'lucide-react';
 
 interface LookbookPageProps {
@@ -35,14 +42,38 @@ export const LookbookPage: React.FC<LookbookPageProps> = ({
   const { shareLinks, createOrUpdateShareLink, revokeShareLink } = useSocial();
 
   const [filterFav, setFilterFav] = useState(false);
+  const [selectedOutfitId, setSelectedOutfitId] = useState<string | null>(null);
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [shareTargetOutfit, setShareTargetOutfit] = useState<Outfit | null>(null);
   const [shareVisibility, setShareVisibility] = useState<ShareVisibility>('unlisted');
   const [creatingLink, setCreatingLink] = useState(false);
 
   const visibleOutfits = filterFav ? outfits.filter((o) => o.isFavorite) : outfits;
+  const detailOutfit = useMemo(
+    () => outfits.find((o) => o.id === selectedOutfitId) || null,
+    [outfits, selectedOutfitId]
+  );
 
   const resolvePiece = (id?: string) => wardrobe.find((w) => w.id === id);
+
+  const getOutfitPiecesDetailed = (outfit: Outfit) => {
+    const topIds = getOutfitTopIds(outfit);
+    const topLabels = getTopLayerLabels(topIds.length);
+    const rows: { label: string; item: ClothingItem }[] = [];
+    topIds.forEach((id, idx) => {
+      const item = resolvePiece(id);
+      if (item) rows.push({ label: topLabels[idx] || 'Top', item });
+    });
+    const bottom = resolvePiece(outfit.bottomId);
+    if (bottom) rows.push({ label: 'Bottom', item: bottom });
+    const shoes = resolvePiece(outfit.shoesId);
+    if (shoes) rows.push({ label: 'Footwear', item: shoes });
+    getOutfitAccessoryIds(outfit).forEach((id) => {
+      const acc = resolvePiece(id);
+      if (acc) rows.push({ label: 'Accessory', item: acc });
+    });
+    return rows;
+  };
 
   const handleOpenShareDialog = (outfit?: Outfit) => {
     setShareTargetOutfit(outfit || null);
@@ -80,7 +111,7 @@ export const LookbookPage: React.FC<LookbookPageProps> = ({
         <div>
           <h1 className="font-display text-2xl font-bold tracking-tight">My Lookbook</h1>
           <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8]">
-            Saved outfit combinations, style tags, remix controls, and shareable links.
+            Saved outfit combinations, layered silhouettes, remix controls, and shareable links.
           </p>
         </div>
 
@@ -126,93 +157,166 @@ export const LookbookPage: React.FC<LookbookPageProps> = ({
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+        <div className="grid grid-cols-3 lg:grid-cols-4 gap-1.5 sm:gap-3">
           {visibleOutfits.map((outfit) => {
-            const pieces = [
-              resolvePiece(outfit.topId),
-              resolvePiece(outfit.bottomId),
-              resolvePiece(outfit.shoesId),
-            ].filter(Boolean);
+            const totalPieces = getOutfitAllItemIds(outfit).length;
+            return (
+              <button
+                key={outfit.id}
+                type="button"
+                onClick={() => setSelectedOutfitId(outfit.id)}
+                className="group relative rounded-sm sm:rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] overflow-hidden text-left shadow-sm cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#171717] dark:focus-visible:ring-[#e5e1da]"
+              >
+                <div className="relative aspect-square overflow-hidden">
+                  <OutfitCollageThumb outfit={outfit} wardrobe={wardrobe} />
+                  {outfit.isFavorite && (
+                    <span
+                      aria-label="Favorite outfit"
+                      className="absolute top-1.5 left-1.5 w-6 h-6 rounded-full bg-black/65 text-white flex items-center justify-center"
+                    >
+                      <Heart className="w-3 h-3 fill-current" />
+                    </span>
+                  )}
+                  {outfit.visibility === 'private' && (
+                    <span
+                      aria-label="Private outfit"
+                      className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-black/65 text-white flex items-center justify-center"
+                    >
+                      <Lock className="w-3 h-3" />
+                    </span>
+                  )}
+                </div>
+                <div className="p-2 sm:p-3 space-y-0.5">
+                  <p className="text-[11px] sm:text-xs font-display font-bold truncate">
+                    {outfit.name}
+                  </p>
+                  <p className="text-[10px] text-[#4e4c46] dark:text-[#c2bfb8] truncate">
+                    {outfit.styleCategory} · {totalPieces} {totalPieces === 1 ? 'piece' : 'pieces'}
+                  </p>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
-            const hasPrivatePiece = pieces.some((p) => p!.visibility === 'private');
+      {/* Outfit Detail Modal */}
+      {detailOutfit && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="lookbook-detail-title"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setSelectedOutfitId(null);
+          }}
+        >
+          {(() => {
+            const detailedPieces = getOutfitPiecesDetailed(detailOutfit);
+            const hasPrivatePiece = detailedPieces.some((p) => p.item.visibility === 'private');
             const cycleVis =
-              outfit.visibility === 'public'
+              detailOutfit.visibility === 'public'
                 ? 'friends'
-                : outfit.visibility === 'friends'
+                : detailOutfit.visibility === 'friends'
                 ? 'followers'
-                : outfit.visibility === 'followers'
+                : detailOutfit.visibility === 'followers'
                 ? 'private'
                 : 'public';
 
             return (
-              <article
-                key={outfit.id}
-                className="rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] overflow-hidden flex flex-col shadow-sm"
-              >
-                <div className="p-3 bg-[#eae7e0] dark:bg-[#171717] grid grid-cols-3 gap-2">
-                  {[0, 1, 2].map((idx) => {
-                    const p = pieces[idx];
-                    return (
-                      <div
-                        key={idx}
-                        className="aspect-square rounded-control overflow-hidden bg-white dark:bg-[#242424] border border-[#d4cfc5]/70 dark:border-[#404040]"
-                      >
-                        <GarmentImage
-                          src={p?.thumbUrl || p?.imageUrl}
-                          mediaId={p?.mediaId}
-                          alt={p?.altText || 'Outfit piece'}
-                          fallbackLabel={p?.name || 'Empty'}
-                          isCutout={p?.isCutout}
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <div className="p-4 flex-1 flex flex-col justify-between gap-3">
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between gap-2">
+              <div className="w-full max-w-lg rounded-modal bg-[#f5f4f0] dark:bg-[#242424] border border-[#d4cfc5] dark:border-[#404040] shadow-2xl overflow-hidden my-auto">
+                <div className="px-5 py-4 border-b border-[#d4cfc5] dark:border-[#404040] flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
                       <span className="px-2 py-0.5 rounded-chip text-[10px] font-mono-num uppercase tracking-wider bg-[#eae7e0] dark:bg-[#303030]">
-                        {outfit.styleCategory}
+                        {detailOutfit.styleCategory}
                       </span>
                       <VisibilityBadge
-                        visibility={outfit.visibility || 'public'}
-                        onClick={() => editOutfit(outfit.id, { visibility: cycleVis })}
+                        visibility={detailOutfit.visibility || 'public'}
+                        onClick={() => editOutfit(detailOutfit.id, { visibility: cycleVis })}
                       />
                     </div>
-                    <h3 className="font-display font-bold text-base">{outfit.name}</h3>
-                    {outfit.occasion && (
-                      <p className="text-xs font-medium text-[#4e4c46] dark:text-[#c2bfb8]">
-                        Occasion: {outfit.occasion}
-                      </p>
-                    )}
-                    {outfit.description && (
-                      <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8] line-clamp-2">
-                        {outfit.description}
-                      </p>
-                    )}
-                    {hasPrivatePiece && outfit.visibility !== 'private' && (
-                      <p className="text-[11px] text-amber-700 dark:text-amber-300">
-                        Includes a private wardrobe piece (hidden as &ldquo;Private piece&rdquo; for viewers).
-                      </p>
+                    <h2 id="lookbook-detail-title" className="font-display font-bold text-lg truncate mt-1">
+                      {detailOutfit.name}
+                    </h2>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedOutfitId(null)}
+                    aria-label="Close outfit details"
+                    className="w-10 h-10 rounded-control flex items-center justify-center hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="p-5 space-y-4 max-h-[75vh] overflow-y-auto">
+                  {detailOutfit.occasion && (
+                    <p className="text-xs font-medium text-[#4e4c46] dark:text-[#c2bfb8]">
+                      Occasion: {detailOutfit.occasion}
+                    </p>
+                  )}
+                  {detailOutfit.description && (
+                    <p className="text-xs leading-relaxed text-[#4e4c46] dark:text-[#c2bfb8]">
+                      {detailOutfit.description}
+                    </p>
+                  )}
+                  {hasPrivatePiece && detailOutfit.visibility !== 'private' && (
+                    <p className="text-[11px] p-2.5 rounded-control bg-amber-500/10 border border-amber-500/30 text-amber-800 dark:text-amber-300">
+                      Includes a private wardrobe piece (shown as &ldquo;Private piece&rdquo; for viewers).
+                    </p>
+                  )}
+
+                  <div className="space-y-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8]">
+                      All Pieces ({detailedPieces.length})
+                    </p>
+                    {detailedPieces.length === 0 ? (
+                      <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8]">No pieces attached.</p>
+                    ) : (
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                        {detailedPieces.map(({ label, item }, idx) => (
+                          <div
+                            key={`${item.id}_${idx}`}
+                            className="rounded-control border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#171717] overflow-hidden"
+                          >
+                            <div className="aspect-square bg-[#eae7e0] dark:bg-[#242424]">
+                              <GarmentImage
+                                src={item.thumbUrl || item.imageUrl}
+                                mediaId={item.mediaId}
+                                alt={item.altText || item.name}
+                                isCutout={item.isCutout}
+                              />
+                            </div>
+                            <div className="p-2">
+                              <p className="text-[10px] font-mono-num uppercase text-[#4e4c46] dark:text-[#b0b0b0]">
+                                {label}
+                              </p>
+                              <p className="text-xs font-semibold truncate">{item.name}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                     )}
                   </div>
 
-                  <div className="pt-3 border-t border-[#d4cfc5]/70 dark:border-[#404040]/70 flex items-center justify-between gap-1">
+                  <div className="pt-3 border-t border-[#d4cfc5] dark:border-[#404040] flex flex-wrap items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => toggleFavoriteOutfit(outfit)}
-                      aria-label="Toggle favorite"
-                      className="p-2 rounded-control hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer"
+                      onClick={() => toggleFavoriteOutfit(detailOutfit)}
+                      className="px-3 py-2 rounded-control border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#171717] text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
                     >
-                      <Heart className={`w-4 h-4 ${outfit.isFavorite ? 'fill-current' : ''}`} />
+                      <Heart className={`w-3.5 h-3.5 ${detailOutfit.isFavorite ? 'fill-current' : ''}`} />
+                      <span>{detailOutfit.isFavorite ? 'Favorited' : 'Favorite'}</span>
                     </button>
 
                     <button
                       type="button"
-                      onClick={() => onShareOutfitToFeed(outfit)}
-                      title="Post outfit to social feed"
-                      className="px-2.5 py-1.5 rounded-control hover:bg-[#eae7e0] dark:hover:bg-[#303030] text-xs font-medium flex items-center gap-1 cursor-pointer"
+                      onClick={() => {
+                        setSelectedOutfitId(null);
+                        onShareOutfitToFeed(detailOutfit);
+                      }}
+                      className="px-3.5 py-2 rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
                     >
                       <Share2 className="w-3.5 h-3.5" />
                       <span>Post to feed</span>
@@ -220,39 +324,46 @@ export const LookbookPage: React.FC<LookbookPageProps> = ({
 
                     <button
                       type="button"
-                      onClick={() => handleOpenShareDialog(outfit)}
-                      title="Get unlisted or public link"
-                      className="p-2 rounded-control hover:bg-[#eae7e0] dark:hover:bg-[#303030] cursor-pointer"
+                      onClick={() => {
+                        setSelectedOutfitId(null);
+                        handleOpenShareDialog(detailOutfit);
+                      }}
+                      className="px-3 py-2 rounded-control border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#171717] text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
                     >
                       <Link2 className="w-3.5 h-3.5" />
+                      <span>Share link</span>
                     </button>
 
                     <button
                       type="button"
-                      onClick={() => onEditInBuilder(outfit)}
-                      title="Edit or swap one piece"
-                      className="px-2.5 py-1.5 rounded-control hover:bg-[#eae7e0] dark:hover:bg-[#303030] text-xs font-medium flex items-center gap-1 cursor-pointer"
+                      onClick={() => {
+                        setSelectedOutfitId(null);
+                        onEditInBuilder(detailOutfit);
+                      }}
+                      className="px-3 py-2 rounded-control border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#171717] text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
                     >
                       <Repeat className="w-3.5 h-3.5" />
-                      <span>Remix</span>
+                      <span>Edit / Remix</span>
                     </button>
 
                     <button
                       type="button"
                       onClick={async () => {
-                        await removeOutfit(outfit);
+                        await removeOutfit(detailOutfit);
+                        setSelectedOutfitId(null);
                         onToast('Outfit deleted.');
                       }}
-                      aria-label={`Delete ${outfit.name}`}
-                      className="p-2 rounded-control hover:bg-red-500/15 text-red-600 dark:text-red-400 cursor-pointer ml-auto"
+                      aria-label={`Delete ${detailOutfit.name}`}
+                      className="px-3 py-2 rounded-control border border-red-500/40 text-red-600 dark:text-red-400 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer ml-auto"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
+                      <span>Delete</span>
                     </button>
                   </div>
                 </div>
-              </article>
+              </div>
             );
-          })}
+          })()}
         </div>
       )}
 

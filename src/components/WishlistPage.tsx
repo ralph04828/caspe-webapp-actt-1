@@ -1,15 +1,17 @@
 import React, { useMemo, useState } from 'react';
-import { CLOTHING_CATEGORIES, STYLE_CATEGORIES, Visibility, WishlistItem } from '../types';
+import { CLOTHING_CATEGORIES, Visibility, WishlistItem } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useWardrobe } from '../context/WardrobeContext';
 import { preparePreviewDataUrl, uploadImageAsset } from '../services/storageService';
+import { dedupeStyleTags } from '../utils/styleTags';
 import { GarmentImage } from './GarmentImage';
 import { VisibilityBadge } from './VisibilityBadge';
 import { PhotoCropState, PhotoEditorModal, createDefaultCropState } from './PhotoEditorModal';
 import { PhotoPickerButton } from './PhotoPickerButton';
+import { StyleTagSelector } from './StyleTagSelector';
 import { DiscardDraftDialog } from './DiscardDraftDialog';
 import { ErrorBoundary } from './ErrorBoundary';
-import { AlertCircle, Plus, CheckCircle2, Trash2, ArrowRightCircle, X, Crop } from 'lucide-react';
+import { AlertCircle, Plus, CheckCircle2, Trash2, ArrowRightCircle, X, Crop, Lock } from 'lucide-react';
 
 interface WishlistPageProps {
   onToast: (msg: string, type?: 'success' | 'error') => void;
@@ -37,8 +39,13 @@ export const WishlistPage: React.FC<WishlistPageProps> = ({ onToast }) => {
   const [saving, setSaving] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
   const [discardOpen, setDiscardOpen] = useState(false);
+  const [selectedWishId, setSelectedWishId] = useState<string | null>(null);
 
   const filtered = wishlist.filter((w) => (filterStatus === 'all' ? true : w.status === filterStatus));
+  const selectedWish = useMemo(
+    () => wishlist.find((w) => w.id === selectedWishId) || null,
+    [wishlist, selectedWishId]
+  );
 
   const hasUnsavedDraft = useMemo(
     () => Boolean(name.trim() || brand.trim() || notes.trim() || photoDataUrl || rawPhotoUrl),
@@ -100,7 +107,7 @@ export const WishlistPage: React.FC<WishlistPageProps> = ({ onToast }) => {
           .split(',')
           .map((c) => c.trim())
           .filter(Boolean),
-        styleTags,
+        styleTags: dedupeStyleTags(styleTags, userProfile.customStyles, 5),
         priority,
         status: 'wanted',
         visibility,
@@ -173,107 +180,173 @@ export const WishlistPage: React.FC<WishlistPageProps> = ({ onToast }) => {
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filtered.map((item: WishlistItem) => {
-            const nextVis =
-              item.visibility === 'private'
-                ? 'public'
-                : item.visibility === 'public'
-                ? 'followers'
-                : 'private';
+        <div className="grid grid-cols-3 lg:grid-cols-4 gap-1.5 sm:gap-3">
+          {filtered.map((item: WishlistItem) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => setSelectedWishId(item.id)}
+              className="group relative aspect-square rounded-control sm:rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-[#eae7e0] dark:bg-[#1e1e1e] overflow-hidden text-left cursor-pointer"
+            >
+              <GarmentImage
+                src={item.thumbUrl || item.imageUrl}
+                mediaId={item.mediaId}
+                alt={item.name}
+                fallbackLabel={item.name}
+                className="w-full h-full object-cover object-center transition-transform duration-200 group-hover:scale-[1.03]"
+              />
+              <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded-chip text-[9px] font-mono-num uppercase bg-black/70 text-white">
+                {item.priority}
+              </span>
+              {item.visibility === 'private' && (
+                <span
+                  aria-label="Private wishlist piece"
+                  className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-black/65 text-white flex items-center justify-center"
+                >
+                  <Lock className="w-2.5 h-2.5" />
+                </span>
+              )}
+              <div className="absolute inset-x-0 bottom-0 p-1.5 sm:p-2.5 bg-gradient-to-t from-black/80 via-black/35 to-transparent text-white">
+                <p className="text-[11px] sm:text-xs font-semibold truncate">{item.name}</p>
+                <p className="text-[9px] sm:text-[10px] opacity-80 truncate">
+                  {item.brand} · {item.status === 'got_it' ? 'In Wardrobe' : item.category}
+                </p>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
 
-            return (
-              <article
-                key={item.id}
-                className="rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] overflow-hidden flex flex-col shadow-sm"
+      {/* Wishlist Detail Modal */}
+      {selectedWish && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="wish-detail-title"
+          onClick={() => setSelectedWishId(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-modal bg-[#f5f4f0] dark:bg-[#242424] border border-[#d4cfc5] dark:border-[#404040] overflow-hidden shadow-2xl max-h-[88vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="relative h-64 bg-[#eae7e0] dark:bg-[#171717] shrink-0">
+              <GarmentImage
+                src={selectedWish.thumbUrl || selectedWish.imageUrl}
+                mediaId={selectedWish.mediaId}
+                alt={selectedWish.name}
+                fallbackLabel={selectedWish.name}
+              />
+              <button
+                type="button"
+                onClick={() => setSelectedWishId(null)}
+                aria-label="Close wishlist item"
+                className="absolute top-3 right-3 w-9 h-9 rounded-full bg-black/70 text-white flex items-center justify-center cursor-pointer"
               >
-                <div className="relative h-48 bg-[#eae7e0] dark:bg-[#171717]">
-                  <GarmentImage
-                    src={item.thumbUrl || item.imageUrl}
-                    mediaId={item.mediaId}
-                    alt={item.name}
-                    fallbackLabel={item.name}
-                  />
-                  <div className="absolute top-2.5 left-2.5">
-                    <span className="px-2 py-1 rounded-chip text-[10px] font-mono-num uppercase tracking-wider bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717]">
-                      {item.priority} priority
-                    </span>
-                  </div>
-                  <div className="absolute top-2.5 right-2.5">
-                    <VisibilityBadge
-                      visibility={item.visibility || 'private'}
-                      onClick={() => editWishlist(item.id, { visibility: nextVis })}
-                    />
-                  </div>
+                <X className="w-4 h-4" />
+              </button>
+              <div className="absolute top-3 left-3">
+                <span className="px-2.5 py-1 rounded-chip text-[10px] font-mono-num uppercase bg-black/75 text-white">
+                  {selectedWish.priority} priority
+                </span>
+              </div>
+            </div>
+
+            <div className="p-5 overflow-y-auto space-y-3.5">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8]">
+                    {selectedWish.brand} · {selectedWish.category}
+                  </p>
+                  <h2 id="wish-detail-title" className="font-display font-bold text-lg mt-0.5">
+                    {selectedWish.name}
+                  </h2>
                 </div>
+                <VisibilityBadge
+                  visibility={selectedWish.visibility || 'private'}
+                  onClick={() => {
+                    const nextVis =
+                      selectedWish.visibility === 'private'
+                        ? 'public'
+                        : selectedWish.visibility === 'public'
+                        ? 'followers'
+                        : 'private';
+                    editWishlist(selectedWish.id, { visibility: nextVis });
+                  }}
+                />
+              </div>
 
-                <div className="p-4 flex-1 flex flex-col justify-between gap-3">
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between text-[11px] text-[#4e4c46] dark:text-[#c2bfb8]">
-                      <span className="font-semibold uppercase tracking-wider">{item.brand}</span>
-                      <span>{item.category}</span>
-                    </div>
-                    <h3 className="font-display font-bold text-base">{item.name}</h3>
-                    {item.notes && (
-                      <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8] line-clamp-2">
-                        {item.notes}
-                      </p>
-                    )}
-                    <div className="flex flex-wrap gap-1 pt-1">
-                      {item.colorTags?.map((c) => (
-                        <span
-                          key={c}
-                          className="px-2 py-0.5 rounded-chip text-[10px] bg-[#eae7e0] dark:bg-[#303030]"
-                        >
-                          {c}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
+              {selectedWish.notes && (
+                <p className="text-xs leading-relaxed text-[#4e4c46] dark:text-[#c2bfb8]">
+                  {selectedWish.notes}
+                </p>
+              )}
 
-                  <div className="pt-3 border-t border-[#d4cfc5]/70 dark:border-[#404040]/70 flex items-center justify-between gap-2">
-                    {item.status === 'wanted' ? (
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          await markWishlistGotItAndMove(item);
-                          onToast(`Moved "${item.name}" to My Wardrobe!`);
-                        }}
-                        className="px-3 py-1.5 rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <ArrowRightCircle className="w-3.5 h-3.5" />
-                        <span>Got it → Wardrobe</span>
-                      </button>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400">
-                        <CheckCircle2 className="w-4 h-4" />
-                        <span>In Wardrobe</span>
-                      </span>
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        await removeWishlist(item);
-                        onToast('Removed from Wishlist.');
-                      }}
-                      aria-label={`Delete ${item.name}`}
-                      className="p-2 rounded-control hover:bg-red-500/15 text-red-600 dark:text-red-400 cursor-pointer"
+              {(selectedWish.colorTags?.length > 0 || selectedWish.styleTags?.length > 0) && (
+                <div className="flex flex-wrap gap-1.5">
+                  {selectedWish.colorTags?.map((c) => (
+                    <span
+                      key={c}
+                      className="px-2 py-0.5 rounded-chip text-[11px] bg-[#eae7e0] dark:bg-[#303030]"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
+                      {c}
+                    </span>
+                  ))}
+                  {dedupeStyleTags(selectedWish.styleTags || []).map((t) => (
+                    <span
+                      key={t}
+                      className="px-2 py-0.5 rounded-chip text-[11px] border border-[#d4cfc5] dark:border-[#404040]"
+                    >
+                      {t}
+                    </span>
+                  ))}
                 </div>
-              </article>
-            );
-          })}
+              )}
+
+              <div className="pt-3 border-t border-[#d4cfc5]/70 dark:border-[#404040]/70 flex items-center justify-between gap-2">
+                {selectedWish.status === 'wanted' ? (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await markWishlistGotItAndMove(selectedWish);
+                      onToast(`Moved "${selectedWish.name}" to My Wardrobe!`);
+                      setSelectedWishId(null);
+                    }}
+                    className="px-4 py-2 min-h-[40px] rounded-full bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <ArrowRightCircle className="w-3.5 h-3.5" />
+                    <span>Got it → Wardrobe</span>
+                  </button>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>In Wardrobe</span>
+                  </span>
+                )}
+
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await removeWishlist(selectedWish);
+                    setSelectedWishId(null);
+                    onToast('Removed from Wishlist.');
+                  }}
+                  aria-label={`Delete ${selectedWish.name}`}
+                  className="px-3 py-2 min-h-[40px] rounded-control border border-red-500/40 text-red-600 dark:text-red-400 hover:bg-red-500/10 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Delete</span>
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
       {/* Add Modal */}
       {modalOpen && (
         <div
-          className="fixed inset-0 z-50 bg-black/65 backdrop-blur-xs flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 bg-black/65 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
           role="dialog"
           aria-modal="true"
           aria-labelledby="wishlist-modal-title"
@@ -281,7 +354,7 @@ export const WishlistPage: React.FC<WishlistPageProps> = ({ onToast }) => {
             if (e.target === e.currentTarget) attemptCloseModal();
           }}
         >
-          <div className="w-full max-w-md rounded-modal bg-[#f5f4f0] dark:bg-[#242424] border border-[#d4cfc5] dark:border-[#404040] p-6 space-y-4 shadow-2xl">
+          <div className="w-full max-w-md rounded-modal bg-[#f5f4f0] dark:bg-[#242424] border border-[#d4cfc5] dark:border-[#404040] p-6 space-y-4 shadow-2xl my-auto max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between">
               <h2 id="wishlist-modal-title" className="font-display font-bold text-lg">
                 Add to Wishlist
@@ -396,29 +469,15 @@ export const WishlistPage: React.FC<WishlistPageProps> = ({ onToast }) => {
                   </select>
                 </div>
 
-                <div className="flex flex-wrap gap-1">
-                  {STYLE_CATEGORIES.slice(0, 5).map((tag) => {
-                    const active = styleTags.includes(tag);
-                    return (
-                      <button
-                        key={tag}
-                        type="button"
-                        onClick={() =>
-                          setStyleTags((prev) =>
-                            prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]
-                          )
-                        }
-                        className={`px-2 py-1 rounded-chip text-[11px] border cursor-pointer ${
-                          active
-                            ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717]'
-                            : 'border-[#d4cfc5] dark:border-[#404040]'
-                        }`}
-                      >
-                        {tag}
-                      </button>
-                    );
-                  })}
-                </div>
+                <StyleTagSelector
+                  label="Style Tags"
+                  selected={styleTags}
+                  onChange={setStyleTags}
+                  onError={(msg) => {
+                    setModalError(msg);
+                    onToast(msg, 'error');
+                  }}
+                />
 
                 <select
                   value={visibility}

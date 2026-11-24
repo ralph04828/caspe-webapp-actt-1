@@ -18,6 +18,7 @@ import { AvatarImage } from './AvatarImage';
 import { AvatarCropModal } from './AvatarCropModal';
 import { GarmentImage } from './GarmentImage';
 import { PhotoPickerButton } from './PhotoPickerButton';
+import { StyleTagSelector } from './StyleTagSelector';
 import {
   ArrowRight,
   AtSign,
@@ -710,34 +711,13 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onNavigate, onTo
                 />
               </div>
 
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-2">
-                  Style Tags (Optional)
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {FIT_VIBE_TAGS.map((tag) => {
-                    const active = styleTags.includes(tag);
-                    return (
-                      <button
-                        key={tag}
-                        type="button"
-                        onClick={() =>
-                          setStyleTags((prev) =>
-                            prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]
-                          )
-                        }
-                        className={`px-3 py-2 min-h-[40px] rounded-chip text-xs font-semibold border transition-colors cursor-pointer ${
-                          active
-                            ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-[#171717] dark:border-[#e5e1da]'
-                            : 'border-[#d4cfc5] dark:border-[#404040] bg-[#f5f4f0] dark:bg-[#171717] hover:bg-[#eae7e0] dark:hover:bg-[#303030]'
-                        }`}
-                      >
-                        {tag}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+              <StyleTagSelector
+                builtInOptions={FIT_VIBE_TAGS}
+                label="Style Tags (Optional)"
+                selected={styleTags}
+                onChange={setStyleTags}
+                onError={(msg) => setStep1Error(msg)}
+              />
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-[#d4cfc5] dark:border-[#404040]">
                 <div>
@@ -1017,43 +997,32 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onNavigate, onTo
               </div>
             )}
 
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-2">
-                Pick 1 or 2 vibes for this fit
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {FIT_VIBE_TAGS.map((tag) => {
-                  const active = !fitNotSure && fitVibes.includes(tag);
-                  return (
-                    <button
-                      key={tag}
-                      type="button"
-                      onClick={() => toggleFitVibe(tag)}
-                      className={`px-3 py-2 min-h-[42px] rounded-chip text-xs font-semibold border transition-colors cursor-pointer ${
-                        active
-                          ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-[#171717] dark:border-[#e5e1da]'
-                          : 'border-[#d4cfc5] dark:border-[#404040] bg-[#f5f4f0] dark:bg-[#171717] hover:bg-[#eae7e0] dark:hover:bg-[#303030]'
-                      }`}
-                    >
-                      {tag}
-                    </button>
-                  );
-                })}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFitNotSure((prev) => !prev);
-                    setFitVibes([]);
-                  }}
-                  className={`px-3 py-2 min-h-[42px] rounded-chip text-xs font-semibold border transition-colors cursor-pointer ${
-                    fitNotSure
-                      ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-[#171717] dark:border-[#e5e1da]'
-                      : 'border-[#d4cfc5] dark:border-[#404040] bg-[#f5f4f0] dark:bg-[#171717]'
-                  }`}
-                >
-                  Not sure
-                </button>
-              </div>
+            <div className="space-y-2">
+              <StyleTagSelector
+                builtInOptions={FIT_VIBE_TAGS}
+                label="Pick 1 or 2 vibes for this fit"
+                maxSelected={2}
+                selected={fitNotSure ? [] : fitVibes}
+                onChange={(next) => {
+                  setFitNotSure(false);
+                  setFitVibes(next);
+                }}
+                onError={(msg) => setFitError(msg)}
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setFitNotSure((prev) => !prev);
+                  setFitVibes([]);
+                }}
+                className={`px-3 py-1.5 min-h-[36px] rounded-chip text-xs font-semibold border transition-colors cursor-pointer ${
+                  fitNotSure
+                    ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-[#171717] dark:border-[#e5e1da]'
+                    : 'border-[#d4cfc5] dark:border-[#404040] bg-[#f5f4f0] dark:bg-[#171717]'
+                }`}
+              >
+                Not sure
+              </button>
             </div>
 
             <div className="flex flex-col sm:flex-row gap-2.5 pt-2">

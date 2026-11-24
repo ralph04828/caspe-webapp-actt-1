@@ -6,9 +6,11 @@ import { useWardrobe } from '../context/WardrobeContext';
 import { useSocial } from '../context/SocialContext';
 import { preparePreviewDataUrl, resolveMediaRef, uploadImageAsset } from '../services/storageService';
 import { normalizeUsername } from '../utils/formatters';
+import { dedupeStyleTags } from '../utils/styleTags';
 import { AvatarImage } from './AvatarImage';
 import { PhotoEditorModal, createDefaultCropState } from './PhotoEditorModal';
 import { PhotoPickerButton } from './PhotoPickerButton';
+import { StyleTagSelector } from './StyleTagSelector';
 import { ErrorBoundary } from './ErrorBoundary';
 import { AlertCircle, Copy, Download, Loader2, Lock, RotateCw, Save, Shield, Trash2, Upload } from 'lucide-react';
 
@@ -139,7 +141,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onToast }) => {
         bio: bio.trim(),
         pronouns: pronouns.trim(),
         location: location.trim(),
-        styleTags,
+        styleTags: dedupeStyleTags(styleTags, userProfile?.customStyles, 5),
         isPublic,
         defaultItemVisibility: defaultItemVis,
         defaultOutfitVisibility: defaultOutfitVis,
@@ -366,34 +368,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onToast }) => {
           />
         </div>
 
-        <div>
-          <label className="block text-xs font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8] mb-1.5">
-            Style Tags
-          </label>
-          <div className="flex flex-wrap gap-1.5">
-            {FIT_VIBE_TAGS.map((tag) => {
-              const active = styleTags.includes(tag);
-              return (
-                <button
-                  key={tag}
-                  type="button"
-                  onClick={() =>
-                    setStyleTags((prev) =>
-                      prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]
-                    )
-                  }
-                  className={`px-2.5 py-1 rounded-chip text-xs border cursor-pointer ${
-                    active
-                      ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717]'
-                      : 'border-[#d4cfc5] dark:border-[#404040]'
-                  }`}
-                >
-                  {tag}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        <StyleTagSelector
+          builtInOptions={FIT_VIBE_TAGS}
+          label="Style Tags"
+          selected={styleTags}
+          onChange={setStyleTags}
+          onError={(msg) => onToast(msg, 'error')}
+        />
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-[#d4cfc5] dark:border-[#404040]">
           <div>

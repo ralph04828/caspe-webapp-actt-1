@@ -2,11 +2,11 @@ import React, { useMemo, useState } from 'react';
 import { NavSection, STYLE_CATEGORIES, SocialPost } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useSocial } from '../context/SocialContext';
-import { resolveDisplayAspectRatio } from '../utils/aspectRatio';
+import { dedupeStyleTags } from '../utils/styleTags';
 import { AvatarImage } from './AvatarImage';
-import { GarmentImage } from './GarmentImage';
-import { PostCard } from './PostCard';
-import { Search, Heart, MessageCircle, Repeat, UserPlus, Check, Clock, Users } from 'lucide-react';
+import { MediaGridTiles } from './MediaGridTiles';
+import { PostFeedViewerModal } from './PostFeedViewerModal';
+import { Search, UserPlus, Check, Clock, Users } from 'lucide-react';
 
 interface ExplorePageProps {
   onOpenProfile: (userId: string) => void;
@@ -33,12 +33,23 @@ export const ExplorePage: React.FC<ExplorePageProps> = ({
 
   const [queryText, setQueryText] = useState('');
   const [selectedStyle, setSelectedStyle] = useState<string>('All');
-  const [focusedPost, setFocusedPost] = useState<SocialPost | null>(null);
-  const [dimsByPostId, setDimsByPostId] = useState<Record<string, { width: number; height: number }>>({});
+  const [viewerPostId, setViewerPostId] = useState<string | null>(null);
+
+  const availableStyles = useMemo(() => {
+    const combined = dedupeStyleTags(
+      [
+        ...STYLE_CATEGORIES,
+        ...(userProfile?.customStyles || []),
+        ...visiblePostsForFeed.flatMap((p) => p.styleTags || []),
+      ],
+      userProfile?.customStyles
+    );
+    return ['All', ...combined];
+  }, [userProfile?.customStyles, visiblePostsForFeed]);
 
   const matchingPeople = useMemo(() => {
     const q = queryText.trim().toLowerCase().replace(/^@/, '');
-    const myTags = new Set(userProfile?.styleTags || []);
+    const myTags = new Set((userProfile?.styleTags || []).map((t) => t.toLowerCase()));
 
     return discoverProfiles
       .filter((p) => p.uid !== userProfile?.uid)
@@ -51,21 +62,28 @@ export const ExplorePage: React.FC<ExplorePageProps> = ({
         );
       })
       .sort((a, b) => {
-        const aScore = (a.styleTags || []).filter((t) => myTags.has(t)).length;
-        const bScore = (b.styleTags || []).filter((t) => myTags.has(t)).length;
+        const aScore = (a.styleTags || []).filter((t) => myTags.has(t.toLowerCase())).length;
+        const bScore = (b.styleTags || []).filter((t) => myTags.has(t.toLowerCase())).length;
         return bScore - aScore;
       });
   }, [discoverProfiles, queryText, userProfile]);
 
   const matchingPosts = useMemo(() => {
     const q = queryText.trim().toLowerCase().replace(/^#/, '');
+    const selectedLower = selectedStyle.toLowerCase();
     return visiblePostsForFeed.filter((post) => {
-      if (selectedStyle !== 'All' && !post.styleTags?.includes(selectedStyle)) return false;
+      if (
+        selectedStyle !== 'All' &&
+        !post.styleTags?.some((t) => t.toLowerCase() === selectedLower)
+      ) {
+        return false;
+      }
       if (!q) return true;
       return (
+        (post.title || '').toLowerCase().includes(q) ||
         (post.caption || '').toLowerCase().includes(q) ||
         (post.authorUsername || '').toLowerCase().includes(q) ||
-        post.hashtags?.some((h) => h.includes(q)) ||
+        post.hashtags?.some((h) => h.toLowerCase().includes(q)) ||
         post.styleTags?.some((t) => t.toLowerCase().includes(q))
       );
     });
@@ -87,20 +105,23 @@ export const ExplorePage: React.FC<ExplorePageProps> = ({
         </div>
 
         <div className="flex flex-wrap gap-1.5">
-          {['All', ...STYLE_CATEGORIES].map((style) => (
-            <button
-              key={style}
-              type="button"
-              onClick={() => setSelectedStyle(style)}
-              className={`px-3 py-1.5 rounded-chip text-xs font-medium border transition-colors cursor-pointer ${
-                selectedStyle === style
-                  ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-transparent'
-                  : 'border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424]'
-              }`}
-            >
-              {style}
-            </button>
-          ))}
+          {availableStyles.map((style) => {
+            const active = selectedStyle.toLowerCase() === style.toLowerCase();
+            return (
+              <button
+                key={style}
+                type="button"
+                onClick={() => setSelectedStyle(style)}
+                className={`px-3 py-1.5 rounded-chip text-xs font-medium border transition-colors cursor-pointer ${
+                  active
+                    ? 'bg-[#171717] text-[#f5f4f0] dark:bg-[#e5e1da] dark:text-[#171717] border-transparent'
+                    : 'border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424]'
+                }`}
+              >
+                {style}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -219,104 +240,31 @@ export const ExplorePage: React.FC<ExplorePageProps> = ({
         )}
       </section>
 
-      {/* Photo-First Lookbook Grid */}
+      {/* Square 3-col Mobile / 4-col Desktop Discovery Grid */}
       <section className="space-y-3">
         <h2 className="font-display font-bold text-base uppercase tracking-wider">
           Discover Fits ({matchingPosts.length})
         </h2>
 
-        {matchingPosts.length === 0 ? (
-          <div className="p-8 rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] text-center text-xs text-[#4e4c46] dark:text-[#c2bfb8]">
-            No public fits match this filter yet.
-          </div>
-        ) : (
-          <div className="columns-2 md:columns-3 lg:columns-4 gap-3.5 space-y-3.5">
-            {matchingPosts.map((post) => {
-              const nat = dimsByPostId[post.id];
-              const displayAspect = resolveDisplayAspectRatio({
-                aspectRatio: post.aspectRatio,
-                width: post.width,
-                height: post.height,
-                mediaDimensions: post.mediaDimensions,
-                naturalWidth: nat?.width,
-                naturalHeight: nat?.height,
-                fallbackRatio: 4 / 5,
-                maxHeightCss: '80vh',
-              });
-              return (
-                <button
-                  key={post.id}
-                  type="button"
-                  onClick={() => setFocusedPost(post)}
-                  style={displayAspect.frameStyle}
-                  className="break-inside-avoid block w-full mx-auto group relative rounded-card overflow-hidden border border-[#d4cfc5] dark:border-[#404040] bg-[#eae7e0] dark:bg-[#242424] text-left cursor-pointer"
-                >
-                  <GarmentImage
-                    src={post.thumbUrl || post.mediaUrl}
-                    mediaId={post.mediaId}
-                    alt={post.altText || post.caption || 'Fashion fit post'}
-                    fallbackLabel={post.caption || 'Fit post'}
-                    className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
-                    onImageLoad={(dims) => {
-                      setDimsByPostId((prev) =>
-                        prev[post.id]
-                          ? prev
-                          : { ...prev, [post.id]: { width: dims.naturalWidth, height: dims.naturalHeight } }
-                      );
-                    }}
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/15 to-transparent flex flex-col justify-end p-3 text-[#f5f4f0]">
-                    <p className="text-xs font-semibold truncate">@{post.authorUsername || 'member'}</p>
-                    <p className="text-[11px] opacity-85 line-clamp-1">{post.caption || ''}</p>
-                    <div className="flex items-center gap-3 mt-1.5 text-[11px] font-mono-num">
-                      <span className="flex items-center gap-1">
-                        <Heart className="w-3 h-3" /> {post.likesCount ?? 0}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <MessageCircle className="w-3 h-3" /> {post.commentsCount ?? 0}
-                      </span>
-                      {post.allowRemix && (
-                        <span className="flex items-center gap-1 ml-auto">
-                          <Repeat className="w-3 h-3" /> Remix
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        )}
+        <MediaGridTiles
+          posts={matchingPosts}
+          onSelectPost={(post) => setViewerPostId(post.id)}
+          emptyTitle="No public fits match this filter yet"
+          emptyDescription="Try clearing the style filter or searching another aesthetic."
+        />
       </section>
 
-      {/* Focused Post Modal */}
-      {focusedPost && (
-        <div
-          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
-          role="dialog"
-          aria-modal="true"
-          onClick={() => setFocusedPost(null)}
-        >
-          <div className="w-full max-w-xl my-auto" onClick={(e) => e.stopPropagation()}>
-            <PostCard
-              post={focusedPost}
-              onOpenProfile={(uid) => {
-                setFocusedPost(null);
-                onOpenProfile(uid);
-              }}
-              onSelectHashtag={(tag) => {
-                setQueryText(`#${tag}`);
-                setFocusedPost(null);
-              }}
-              onRemixPost={(p) => {
-                setFocusedPost(null);
-                onRemixPost(p);
-              }}
-              onToast={onToast}
-            />
-          </div>
-        </div>
-      )}
+      <PostFeedViewerModal
+        open={Boolean(viewerPostId)}
+        posts={matchingPosts}
+        initialPostId={viewerPostId}
+        title={selectedStyle === 'All' ? 'Discover Fits' : `${selectedStyle} Fits`}
+        onClose={() => setViewerPostId(null)}
+        onOpenProfile={onOpenProfile}
+        onSelectHashtag={(tag) => setQueryText(`#${tag}`)}
+        onRemixPost={onRemixPost}
+        onToast={onToast}
+      />
     </div>
   );
 };

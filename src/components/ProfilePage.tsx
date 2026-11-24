@@ -16,9 +16,13 @@ import { useSocial } from '../context/SocialContext';
 import { getUserProfile } from '../services/firestoreService';
 import { daysSince, formatRelativeTime } from '../utils/formatters';
 import { resolveDisplayAspectRatio } from '../utils/aspectRatio';
+import { getOutfitAccessoryIds, getOutfitTopIds, getTopLayerLabels } from '../utils/outfitLayers';
+import { dedupeStyleTags } from '../utils/styleTags';
 import { AvatarImage } from './AvatarImage';
 import { GarmentImage } from './GarmentImage';
-import { PostCard } from './PostCard';
+import { MediaGridTiles } from './MediaGridTiles';
+import { OutfitCollageThumb } from './OutfitCollageThumb';
+import { PostFeedViewerModal } from './PostFeedViewerModal';
 import {
   ArrowLeft,
   Ban,
@@ -34,6 +38,7 @@ import {
   UserPlus,
   Users,
   VolumeX,
+  X,
 } from 'lucide-react';
 
 interface ProfilePageProps {
@@ -90,6 +95,13 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
   const [profileStories, setProfileStories] = useState<MyDayStory[]>([]);
   const [naturalDimsById, setNaturalDimsById] = useState<Record<string, { width: number; height: number }>>({});
   const [tab, setTab] = useState<'posts' | 'wardrobe' | 'lookbook' | 'myday' | 'friends' | 'stats' | 'saved'>('posts');
+  const [viewerPosts, setViewerPosts] = useState<{
+    posts: SocialPost[];
+    initialId: string;
+    title: string;
+  } | null>(null);
+  const [selectedGarment, setSelectedGarment] = useState<ClothingItem | null>(null);
+  const [selectedOutfitDetail, setSelectedOutfitDetail] = useState<Outfit | null>(null);
 
   useEffect(() => {
     if (isOwn) {
@@ -460,21 +472,18 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
           </div>
 
           {tab === 'posts' && (
-            <div className="space-y-4 max-w-2xl">
-              {profilePosts.length === 0 ? (
-                <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8]">No shared fits yet.</p>
-              ) : (
-                profilePosts.map((p) => (
-                  <PostCard
-                    key={p.id}
-                    post={p}
-                    onOpenProfile={onOpenProfile}
-                    onRemixPost={onRemixPost}
-                    onToast={onToast}
-                  />
-                ))
-              )}
-            </div>
+            <MediaGridTiles
+              posts={profilePosts}
+              onSelectPost={(post) =>
+                setViewerPosts({
+                  posts: profilePosts,
+                  initialId: post.id,
+                  title: isOwn ? 'My Posts' : `@${targetProfile.username}'s Posts`,
+                })
+              }
+              emptyTitle="No shared fits yet."
+              emptyDescription="Fits posted from OOTD, Lookbook, or Feed will show up here."
+            />
           )}
 
           {tab === 'wardrobe' && (
@@ -483,27 +492,36 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
                 No visible wardrobe items yet.
               </p>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3.5">
+              <div className="grid grid-cols-3 lg:grid-cols-4 gap-1.5 sm:gap-3">
                 {profileWardrobe.map((item) => (
-                  <div
+                  <button
                     key={item.id}
-                    className="rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] overflow-hidden"
+                    type="button"
+                    onClick={() => setSelectedGarment(item)}
+                    className="group relative aspect-square rounded-sm sm:rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-[#eae7e0] dark:bg-[#1e1e1e] overflow-hidden text-left cursor-pointer"
                   >
-                    <div className="aspect-square bg-[#eae7e0] dark:bg-[#171717]">
-                      <GarmentImage
-                        src={item.thumbUrl || item.imageUrl}
-                        mediaId={item.mediaId}
-                        alt={item.altText || item.name}
-                        isCutout={item.isCutout}
-                      />
-                    </div>
-                    <div className="p-3">
-                      <p className="text-xs font-semibold truncate">{item.name}</p>
-                      <p className="text-[11px] text-[#4e4c46] dark:text-[#c2bfb8] truncate">
+                    <GarmentImage
+                      src={item.thumbUrl || item.imageUrl}
+                      mediaId={item.mediaId}
+                      alt={item.altText || item.name}
+                      isCutout={item.isCutout}
+                      className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
+                    />
+                    {isOwn && item.visibility === 'private' && (
+                      <span
+                        aria-label="Private item"
+                        className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-black/65 text-white flex items-center justify-center"
+                      >
+                        <Lock className="w-2.5 h-2.5" />
+                      </span>
+                    )}
+                    <div className="absolute inset-x-0 bottom-0 p-1.5 sm:p-2 bg-gradient-to-t from-black/80 via-black/35 to-transparent text-[#f5f4f0]">
+                      <p className="text-[11px] sm:text-xs font-semibold truncate">{item.name}</p>
+                      <p className="hidden sm:block text-[10px] opacity-85 truncate">
                         {item.brand} · {item.color}
                       </p>
                     </div>
-                  </div>
+                  </button>
                 ))}
               </div>
             )
@@ -515,52 +533,29 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
                 No visible lookbook outfits yet.
               </p>
             ) : (
-              <div className="columns-1 sm:columns-2 lg:columns-3 gap-4 space-y-4">
-                {profileOutfits.map((outfit) => {
-                  const nat = naturalDimsById[outfit.id];
-                  const coverAspect = resolveDisplayAspectRatio({
-                    naturalWidth: nat?.width,
-                    naturalHeight: nat?.height,
-                    fallbackRatio: 4 / 5,
-                    maxHeightCss: '80vh',
-                  });
-                  return (
-                    <div
-                      key={outfit.id}
-                      className="break-inside-avoid rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-white dark:bg-[#242424] overflow-hidden"
-                    >
-                      <div className="bg-[#eae7e0] dark:bg-[#171717]">
-                        <div className="w-full mx-auto overflow-hidden" style={coverAspect.frameStyle}>
-                          <GarmentImage
-                            src={outfit.coverImageUrl}
-                            mediaId={outfit.mediaId}
-                            alt={outfit.name}
-                            fallbackLabel={outfit.name}
-                            className="w-full h-full object-cover"
-                            onImageLoad={(dims) => {
-                              setNaturalDimsById((prev) =>
-                                prev[outfit.id]
-                                  ? prev
-                                  : { ...prev, [outfit.id]: { width: dims.naturalWidth, height: dims.naturalHeight } }
-                              );
-                            }}
-                          />
-                        </div>
-                      </div>
-                      <div className="p-3.5 space-y-1">
-                        <span className="px-2 py-0.5 rounded-chip text-[10px] bg-[#eae7e0] dark:bg-[#303030] uppercase">
-                          {outfit.styleCategory}
-                        </span>
-                        <p className="text-sm font-display font-bold truncate">{outfit.name}</p>
-                        {outfit.description && (
-                          <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8] line-clamp-2">
-                            {outfit.description}
-                          </p>
-                        )}
-                      </div>
+              <div className="grid grid-cols-3 lg:grid-cols-4 gap-1.5 sm:gap-3">
+                {profileOutfits.map((outfit) => (
+                  <button
+                    key={outfit.id}
+                    type="button"
+                    onClick={() => setSelectedOutfitDetail(outfit)}
+                    className="group relative aspect-square rounded-sm sm:rounded-card border border-[#d4cfc5] dark:border-[#404040] bg-[#eae7e0] dark:bg-[#1e1e1e] overflow-hidden text-left cursor-pointer"
+                  >
+                    <OutfitCollageThumb
+                      outfit={outfit}
+                      wardrobe={profileWardrobe}
+                      hidePrivateDetails={!isOwn}
+                    />
+                    <div className="absolute inset-x-0 bottom-0 p-1.5 sm:p-2 bg-gradient-to-t from-black/80 via-black/35 to-transparent text-[#f5f4f0]">
+                      <p className="text-[11px] sm:text-xs font-display font-bold truncate">
+                        {outfit.name}
+                      </p>
+                      <p className="hidden sm:block text-[10px] opacity-85 uppercase truncate">
+                        {outfit.styleCategory}
+                      </p>
                     </div>
-                  );
-                })}
+                  </button>
+                ))}
               </div>
             )
           )}
@@ -753,25 +748,184 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
           )}
 
           {tab === 'saved' && isOwn && (
-            <div className="space-y-4 max-w-2xl">
-              {savedPosts.length === 0 ? (
-                <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8]">
-                  Saved fits from your feed will appear here privately.
-                </p>
-              ) : (
-                savedPosts.map((p) => (
-                  <PostCard
-                    key={p.id}
-                    post={p}
-                    onOpenProfile={onOpenProfile}
-                    onRemixPost={onRemixPost}
-                    onToast={onToast}
-                  />
-                ))
-              )}
-            </div>
+            <MediaGridTiles
+              posts={savedPosts}
+              onSelectPost={(post) =>
+                setViewerPosts({
+                  posts: savedPosts,
+                  initialId: post.id,
+                  title: 'Saved Fits',
+                })
+              }
+              emptyTitle="No saved fits yet"
+              emptyDescription="Saved fits from your feed will appear here privately."
+            />
           )}
         </>
+      )}
+
+      <PostFeedViewerModal
+        open={Boolean(viewerPosts)}
+        posts={viewerPosts?.posts || []}
+        initialPostId={viewerPosts?.initialId || null}
+        title={viewerPosts?.title}
+        onClose={() => setViewerPosts(null)}
+        onOpenProfile={onOpenProfile}
+        onRemixPost={onRemixPost}
+        onToast={onToast}
+      />
+
+      {/* Garment Detail Modal */}
+      {selectedGarment && (
+        <div
+          className="fixed inset-0 z-[74] bg-black/75 backdrop-blur-xs flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setSelectedGarment(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-modal border border-[#d4cfc5] dark:border-[#404040] bg-[#f5f4f0] dark:bg-[#242424] shadow-2xl overflow-hidden"
+          >
+            <div className="relative aspect-square bg-[#eae7e0] dark:bg-[#171717]">
+              <GarmentImage
+                src={selectedGarment.imageUrl || selectedGarment.thumbUrl}
+                mediaId={selectedGarment.mediaId}
+                alt={selectedGarment.altText || selectedGarment.name}
+                isCutout={selectedGarment.isCutout}
+                className="w-full h-full object-contain"
+              />
+              <button
+                type="button"
+                onClick={() => setSelectedGarment(null)}
+                aria-label="Close garment detail"
+                className="absolute top-3 right-3 w-9 h-9 rounded-full bg-black/70 text-white flex items-center justify-center cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8]">
+                  {selectedGarment.category}
+                </span>
+                <h3 className="font-display text-lg font-bold">{selectedGarment.name}</h3>
+                <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8]">
+                  {selectedGarment.brand} · {selectedGarment.color} · Size{' '}
+                  {selectedGarment.sizeSystem &&
+                  ['US', 'EU', 'UK', 'CM'].includes(selectedGarment.sizeSystem)
+                    ? `${selectedGarment.sizeSystem} ${selectedGarment.size}`
+                    : selectedGarment.size}
+                </p>
+              </div>
+              {dedupeStyleTags(selectedGarment.styleTags || []).length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {dedupeStyleTags(selectedGarment.styleTags || []).map((t) => (
+                    <span
+                      key={t}
+                      className="px-2 py-0.5 rounded-chip text-[11px] bg-[#eae7e0] dark:bg-[#303030]"
+                    >
+                      {t}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {selectedGarment.description && (
+                <p className="text-xs leading-relaxed text-[#4e4c46] dark:text-[#c2bfb8]">
+                  {selectedGarment.description}
+                </p>
+              )}
+              {isOwn && (
+                <p className="text-[11px] font-mono-num text-[#4e4c46] dark:text-[#c2bfb8] pt-1 border-t border-[#d4cfc5] dark:border-[#404040]">
+                  Laundry: {selectedGarment.laundryStatus} · Worn {selectedGarment.wearCount} times
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Outfit Detail Modal */}
+      {selectedOutfitDetail && (
+        <div
+          className="fixed inset-0 z-[74] bg-black/75 backdrop-blur-xs flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setSelectedOutfitDetail(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-modal border border-[#d4cfc5] dark:border-[#404040] bg-[#f5f4f0] dark:bg-[#242424] shadow-2xl p-5 space-y-4"
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <span className="px-2 py-0.5 rounded-chip text-[10px] bg-[#eae7e0] dark:bg-[#303030] uppercase">
+                  {selectedOutfitDetail.styleCategory}
+                </span>
+                <h3 className="font-display text-lg font-bold mt-1">{selectedOutfitDetail.name}</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedOutfitDetail(null)}
+                aria-label="Close outfit detail"
+                className="w-9 h-9 rounded-control flex items-center justify-center border border-[#d4cfc5] dark:border-[#404040] cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="aspect-square rounded-card overflow-hidden border border-[#d4cfc5] dark:border-[#404040]">
+              <OutfitCollageThumb
+                outfit={selectedOutfitDetail}
+                wardrobe={profileWardrobe}
+                hidePrivateDetails={!isOwn}
+              />
+            </div>
+
+            {selectedOutfitDetail.description && (
+              <p className="text-xs text-[#4e4c46] dark:text-[#c2bfb8]">
+                {selectedOutfitDetail.description}
+              </p>
+            )}
+
+            <div className="space-y-1.5">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-[#4e4c46] dark:text-[#c2bfb8]">
+                Pieces
+              </p>
+              {(() => {
+                const topIds = getOutfitTopIds(selectedOutfitDetail);
+                const topLabels = getTopLayerLabels(topIds.length);
+                const accIds = getOutfitAccessoryIds(selectedOutfitDetail);
+                const slots = [
+                  ...topIds.map((id, idx) => ({ id, label: topLabels[idx] || 'Top' })),
+                  ...(selectedOutfitDetail.bottomId
+                    ? [{ id: selectedOutfitDetail.bottomId, label: 'Bottom' }]
+                    : []),
+                  ...(selectedOutfitDetail.shoesId
+                    ? [{ id: selectedOutfitDetail.shoesId, label: 'Shoes' }]
+                    : []),
+                  ...accIds.map((id, idx) => ({ id, label: `Accessory ${idx + 1}` })),
+                ];
+                return slots.map(({ id, label }) => {
+                  const item = profileWardrobe.find((w) => w.id === id);
+                  const snap = selectedOutfitDetail.pieceSnapshots?.find((s) => s.id === id);
+                  const hidden = !isOwn && ((item?.visibility === 'private') || snap?.isPrivatePlaceholder);
+                  return (
+                    <div
+                      key={`${label}-${id}`}
+                      className="flex items-center justify-between gap-2 px-3 py-2 rounded-control bg-white dark:bg-[#1c1c1c] border border-[#d4cfc5]/70 dark:border-[#404040] text-xs"
+                    >
+                      <span className="font-semibold text-[#4e4c46] dark:text-[#c2bfb8]">{label}</span>
+                      <span className="truncate font-medium">
+                        {hidden ? 'Private item' : item?.name || snap?.name || 'Item'}
+                      </span>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
